@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "files": [
+    {
+      "path": "backend/desktop-entry.mjs",
+      "bytes": 1853992,
+      "sha256": "2eab7b4253f1dfe3501ef1528781a289a44f208d1436a2845d53b53d6961dc9b"
+    },
+    {
+      "path": "backend/pi-host-resources.mjs",
+      "bytes": 8962,
+      "sha256": "650606e0aaea42116ea621801396381a3f320b0dcf56967b9800046e242adbd8"
+    },
+    {
+      "path": "backend/pi-host-session.mjs",
+      "bytes": 3081,
+      "sha256": "e977c6d5b4d416791539f4b476dc35dae2d84d20fec9ce1bef5f0babd62c387c"
+    },
+    {
+      "path": "backend/pi-host-ui.mjs",
+      "bytes": 20712,
+      "sha256": "5ccf83baeae884639df45f4c5e496fa686947aab3fc476cda657f25225c735ae"
+    },
+    {
+      "path": "backend/pi-host.mjs",
+      "bytes": 42155,
+      "sha256": "dbee527ecc9caf02c5ab918afddcba31ff27662403db69e317c2de6e7741dc9c"
+    },
+    {
+      "path": "backend/reference-engine.ts",
+      "bytes": 17132,
+      "sha256": "03c6fbe44e52b2b41cc103b0b6f1467e2bf1953bf747f0866d3bcbdfd44876bd"
+    },
+    {
+      "path": "desktop/main.mjs",
+      "bytes": 1715555,
+      "sha256": "eed611874b7ec8765690fbaa1169d1e312dfdeff903d482123f5efe62794147a"
+    },
+    {
+      "path": "desktop/preload.cjs",
+      "bytes": 2165,
+      "sha256": "f34d0e3d920ef200b162047a87038b6c7192082da02aadc5f854ce3891d02ca8"
+    },
+    {
+      "path": "dist/assets/client-DOkg-Plg.js",
+      "bytes": 184459,
+      "sha256": "29fe0cbfdfc1a4bff84c364429b3f8c653dc53dd4d2cfb92ddad37b1d8fb87cb"
+    },
+    {
+      "path": "dist/assets/fixtures-D6ViGR5h.js",
+      "bytes": 8790,
+      "sha256": "d594f5234b8078eaa293ade7009c44e2e8c8ad33b5408b3fd3eed5248cefa6c2"
+    },
+    {
+      "path": "dist/assets/index-C2CwBAaU.css",
+      "bytes": 27887,
+      "sha256": "201d00aee51e92b2125e40b701900163b1d7004a0eb3b4f84f3e33793dfc084a"
+    },
+    {
+      "path": "dist/assets/index-CgLW18X6.js",
+      "bytes": 3646,
+      "sha256": "8169dcc5a7f6474fce05f97084fb6f90c7f82d1363cb97be28d435493032fe1b"
+    },
+    {
+      "path": "dist/assets/index-CUBIzhyw.js",
+      "bytes": 7704,
+      "sha256": "0623785fba68f1e428e2c103b93736604af0de445647e812d30ce66262f692cb"
+    },
+    {
+      "path": "dist/assets/index-DF_fZo_C.js",
+      "bytes": 471,
+      "sha256": "c3a0d9c762431b6ddf53377161a7c770e89a64628585de59a0ef3b3d47f65225"
+    },
+    {
+      "path": "dist/assets/native-BCw4Hu_G.js",
+      "bytes": 7340,
+      "sha256": "c79a044d92e0fe7e80fc99a7120f2b05336d3a11f5d8d21e3430c93a24f33502"
+    },
+    {
+      "path": "dist/assets/pdf-TYrZqVzP.js",
+      "bytes": 404304,
+      "sha256": "fc0d5a2cb1cd87f28dce91254bb91f0348c6830a5778ed17fec145fdc3f46f13"
+    },
+    {
+      "path": "dist/assets/pdf.worker.min--zrQhpvR.js",
+      "bytes": 68,
+      "sha256": "b01e99dd62bd3efb5c9dea8870bce154b4ff358c20ffd3413d7266ccb9b9b924"
+    },
+    {
+      "path": "dist/assets/pdf.worker.min-wgc6bjNh.mjs",
+      "bytes": 1078612,
+      "sha256": "f499515a0dc93d97787d693a75218a439675719283f56812067c036dcae1f8d5"
+    },
+    {
+      "path": "dist/assets/Workbench-obeGgRpx.js",
+      "bytes": 123743,
+      "sha256": "6518746970e7694debee68b40c146378064246ccca87727814795e4768b228fe"
+    },
+    {
+      "path": "dist/index.html",
+      "bytes": 404,
+      "sha256": "94011368104a5fb03cd47ed86ec49ec63a14a9aa37b0f1a656f5fc81ef94fc29"
+    },
+    {
+      "path": "package.json",
+      "bytes": 140,
+      "sha256": "2282f49a61d8392f54e57bdf19167465594c7c7520800de3bc482aca687bf22f"
+    },
+    {
+      "path": "scripts/desktop-pi-handoff.mjs",
+      "bytes": 25998,
+      "sha256": "be101ce7f0b804bd20a22d33760dbdd5419c2fcac0a46866c162bf4851ed6b91"
+    },
+    {
+      "path": "server/pi-cli-gate.mjs",
+      "bytes": 1172,
+      "sha256": "670998243aff1c643482e899c507e610a03f81e5f1313a13f2e7e6b30c424f84"
+    },
+    {
+      "path": "server/pi-handoff-guard.mjs",
+      "bytes": 638,
+      "sha256": "ce02aa68f315d34a27a737859a7a3e93a0d8f539e82fd4fc9d45452d51accfc8"
+    }
+  ]
+}

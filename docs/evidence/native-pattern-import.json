@@ -1,0 +1,49 @@
+{
+  "source": "~/.cache/herdr-lab-desktop/phase10-readonly-review-iql8h41w (immutable private reference only)",
+  "purpose": "Selectively adapted native lifecycle/security/build patterns, not UI; current file hashes recorded separately at checkpoint.",
+  "files": [
+    {
+      "path": "desktop/config.ts",
+      "sourceSHA256": "90512beaf0b9aa9ec90e8a85ced047f333e5173808e7b5192f2303da38c32778"
+    },
+    {
+      "path": "desktop/backend.ts",
+      "sourceSHA256": "f13d25a7c5424ea60a62d70d4b01098e175783e84bc8b3ad813c026099b78f81"
+    },
+    {
+      "path": "desktop/security.ts",
+      "sourceSHA256": "be98339e73a3890349c809b073bd8f45fb39dcef4676ca77af40ad154a8171e5"
+    },
+    {
+      "path": "desktop/protocol.ts",
+      "sourceSHA256": "f04c7e068bd122b0a388a76311f8f63f91e893e7748fc714f228b6320d956d1d"
+    },
+    {
+      "path": "desktop/window-state.ts",
+      "sourceSHA256": "35eb5e73368b8ae4f8620402e6e47604dead073e4c4b6157a9f307b5f1bf7b38"
+    },
+    {
+      "path": "desktop/windows.ts",
+      "sourceSHA256": "885f9d0641453fffa74db67357479de11260e1cfd8d07db4db7daaa3cd8768fd"
+    },
+    {
+      "path": "desktop/preload.ts",
+      "sourceSHA256": "c6201dd5efd1352c6b4d86597887827d0580170d3a521273a82bd7512b917915"
+    },
+    {
+      "path": "scripts/desktop-build.mjs",
+      "sourceSHA256": "dd30d8c3617e146ec6ba204f1e388e8d43dec7f65c58b4f34a9a7c3bde6074f1"
+    },
+    {
+      "path": "scripts/desktop-package.mjs",
+      "sourceSHA256": "3dd94b78aacef288c6c6cf3029bed275e87c99d9436ae11eae6e5c97f85c066a"
+    }
+  ],
+  "referenceOnly": [
+    {
+      "path": "desktop/main.ts",
+      "sourceSHA256": "84c01457bc2f4116565b033c2d8c8419f2874a84186ecc92978b08398666ca26",
+      "use": "Startup/quit pattern reference; new main was authored around the new UI and explicit startup/error gates."
+    }
+  ]
+}

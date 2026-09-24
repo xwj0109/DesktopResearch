@@ -1,0 +1,50 @@
+{
+  "name": "pi-research-desktop",
+  "productName": "Pi Research",
+  "version": "0.1.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "Desktop-first research workbench using the actual installed Pi harness.",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts tests/*.test.tsx",
+    "check:boundaries": "node scripts/check-boundaries.mjs",
+    "check": "npm run check:boundaries && npm run typecheck && npm test && npm run build",
+    "dev": "vite --configLoader native --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build --configLoader native",
+    "preview": "vite preview --configLoader native --host 127.0.0.1",
+    "desktop:build": "npm run build && node scripts/desktop-build.mjs",
+    "desktop:package": "npm run desktop:build && node scripts/desktop-package.mjs",
+    "postinstall": "node scripts/prepare-pty.mjs"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "express": "5.1.0",
+    "katex": "^0.16.47",
+    "node-pty": "^1.1.0",
+    "pdfjs-dist": "5.4.624",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "zod": "4.1.12"
+  },
+  "devDependencies": {
+    "@electron/packager": "20.3.0",
+    "@types/express": "5.0.5",
+    "@types/node": "24.10.0",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "@types/react-test-renderer": "19.3.0",
+    "electron": "44.4.3",
+    "esbuild": "0.25.12",
+    "prettier": "3.6.2",
+    "react-test-renderer": "19.2.0",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "vite": "7.3.6"
+  }
+}

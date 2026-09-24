@@ -1,0 +1,24 @@
+node_modules/
+dist/
+desktop-build/
+desktop-release/
+release/
+coverage/
+.local-evidence/
+.pi-subagents/
+.vite-cache/
+*.tsbuildinfo
+.runtime/
+.desktop/
+workspaces/
+.env
+.env.*
+!.env.example
+.DS_Store
+._*
+*.log
+
+# Local agent state and generated browser evidence
+.pi/
+.playwright-cli/
+output/

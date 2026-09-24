@@ -1,0 +1,18 @@
+{
+  "at": "2026-09-23T00:54:15.977242+00:00",
+  "type": "new-original-frontend-design-candidate",
+  "source": "private desktop-design-s2zbi70d frozen handoff",
+  "legacyRendererImported": false,
+  "data": "synthetic clearly labelled preview; no connection/dispatch/API",
+  "sourceFiles": {
+    "src/workbench/fixtures.ts": "2e483a31430811cce8e947639c865a318adcf30a7330039d675638a9f12f7fce",
+    "src/workbench/CommandPalette.tsx": "0c6424fd6d7c7a0cca843b33a6105c6ac5c6a81cb16370dbead7a5c5cc1ca574",
+    "src/workbench/styles.css": "dce1c17b61286213731db51ee416a1310bfdf9d85a0d94e5ae9893f032e1ea9b",
+    "src/workbench/model.ts": "f0873a3284d0fea72edb0cd3e9725f9b7a4d692a8059023b9fd7dc0ee659fc91",
+    "src/workbench/Workbench.tsx": "49ed5d800c2dac4b2f96710f82b265ae3bb700617a99d08a9859979e4d0b7e22",
+    "src/workbench/icons.tsx": "de2772afa4b3df0607280796f91d53ab47d6eff39767d27c59740046d7e4ff2c",
+    "src/workbench/Materials.tsx": "be807c91b0b2d174b4e21a00f176a59223b24cda8f40a2febcc500302a82b7db"
+  },
+  "validation": "Parent build and6tests passed after dependency link repointed to NEW repo; actual1440x900 Chrome screenshot confirms workbench composition. Not native or scientific acceptance.",
+  "originalAuthorBoundaryIssue": "Initial private Vite builds wrote transient config modules through legacy dependency symlink; author recorded criterionnot-satisfied. Config switched to native loader/privatecache. This repo has independent non-symlink dependencies and no legacy dependency link."
+}

@@ -1,0 +1,91 @@
+{
+  "version": 2,
+  "date": "2026-09-23",
+  "scope": "Native conversation, scientific materials, durability and packaged integration",
+  "app": "desktop-release/Pi Research-darwin-arm64/Pi Research.app",
+  "validation": {
+    "fullCheck": {
+      "tests": 229,
+      "passed": 229,
+      "failed": 0,
+      "boundarySourceFiles": 108,
+      "typescript": "passed",
+      "vite": "passed"
+    },
+    "package": "macOS arm64 Electron 44.4.3; local ad-hoc signature verified",
+    "payload": {
+      "files": 24,
+      "comparison": "All runtime/assets byte-identical to staged build; only private:true removed from package.json"
+    },
+    "relocationSmoke": "Final payload relocated; ready/create/list/actual-exit-0/reopen-persistence/actual-exit-0; Pi disabled",
+    "nativeGUI": {
+      "tested": [
+        "Strategy and portfolio creation/isolation/window focus",
+        "Composer and pane state quit/relaunch restoration",
+        "Immutable idea save",
+        "PDF rendering and source-bound annotation",
+        "Source code and semantic graph",
+        "Authored fake Pi connect/model/canonical response/tool events/custom renderer",
+        "Quit while fixture connected; exit 0"
+      ],
+      "display": "1200x850 available native window; 1280x800 and 1440x900 geometry automated only",
+      "finalRebuild": "Renderer/workbench-ready diagnostics and graceful SIGTERM exit 0 verified; repeat visual inspection unavailable because Mac locked"
+    },
+    "installedPi": {
+      "version": "0.84.1",
+      "passed": false,
+      "error": "Pi resources failed to load: Failed to load extension: unable to open database file",
+      "boundary": "Temporary inherited macOS proof sandbox denied network and external writes; configured extension database initialization blocked",
+      "noPromptsSent": true,
+      "protectedBaselinesUnchanged": true,
+      "baselineNames": [
+        "settings.json",
+        "auth.json",
+        "models.json",
+        "models-store.json",
+        "sandbox.json",
+        "path-approvals.json"
+      ]
+    },
+    "review": "Independent read-only reviewer cleared focused bootstrap-dialog, ordered keys/Refresh, close-barrier and stale-history fixes; four dedicated React regressions passed"
+  },
+  "payloadInventory": "docs/evidence/native-payload.json",
+  "privateEvidence": [
+    {
+      "path": ".local-evidence/final-check.log",
+      "sha256": "eeb08869404380200a50af400deda68bcb3bcf3b002fa64610e1edc156d2783f"
+    },
+    {
+      "path": ".local-evidence/final-package.log",
+      "sha256": "179e881c22a770529b9e07f82c8bf4a00bd4a82b8f68b220818b1eb4e529f63c"
+    },
+    {
+      "path": ".local-evidence/final-relocated-smoke.log",
+      "sha256": "2022b798808fb540123ebc7838a2961223a1e7561bc6fba24a79ab2dc5b5257c"
+    },
+    {
+      "path": ".local-evidence/final-gui.log",
+      "sha256": "2b27e782bd79cbd39693a4e16f715d6ae736417dac30b797919a9b858eefbdba"
+    },
+    {
+      "path": ".local-evidence/installed-pi-smoke.log",
+      "sha256": "cb9cc4c37ca5beac1977f9e1efa9a53927e2f4b712db46e9ae8039419ac81c10"
+    },
+    {
+      "path": ".local-evidence/native-live-ui.log",
+      "sha256": "bfffac6a630b040c06822b748cad02249c6b7f07b4dfda131dfa34945895a6a5"
+    }
+  ],
+  "noStagedFiles": true,
+  "noLegacyDataOrRuntimeUse": true,
+  "noPaidInference": true,
+  "noGlobalPiConfigurationChanges": true,
+  "residualRisks": [
+    "Configured installed-harness compatibility remains unverified",
+    "Target native display sizes not visually inspected",
+    "Text/basic-key extension terminal is not a full terminal emulator",
+    "Reference experiments do not execute arbitrary authored code",
+    "No forced-crash losslessness claim; uncertain raw input is retained without replay",
+    "Local ad-hoc package is not notarized or distribution-signed"
+  ]
+}
