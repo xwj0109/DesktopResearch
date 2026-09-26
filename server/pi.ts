@@ -59,7 +59,7 @@ export async function relayWorkbenchTool(
   let reply: Record<string, unknown>;
   try {
     if (!workbench) throw new Error("Workbench tools are unavailable in this backend.");
-    reply = { requestId: event.requestId, result: await workbench.call(sid, String(event.name), event.input) };
+    reply = { requestId: event.requestId, result: await workbench.call(sid, String(event.name), event.input, { origin: "agent" }) };
   } catch (error) {
     reply = { requestId: event.requestId, error: String((error as Error)?.message ?? error).slice(0, 2000) };
   }

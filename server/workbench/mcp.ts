@@ -139,7 +139,7 @@ export async function mcpHandle(wb: Workbench, sid: string, body: unknown, stage
       case "tools/call": {
         const name = String(m.params?.name ?? "");
         try {
-          const result = await wb.call(sid, name, m.params?.arguments ?? {}, { idea });
+          const result = await wb.call(sid, name, m.params?.arguments ?? {}, { idea, origin: "agent" });
           return reply(m.id, {
             content: [{ type: "text", text: JSON.stringify(result) }],
             ...(result && typeof result === "object" && !Array.isArray(result) ? { structuredContent: result } : {}),

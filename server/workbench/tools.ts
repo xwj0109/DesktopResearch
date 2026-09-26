@@ -1,6 +1,7 @@
 import { strategyRenameSchema, strategyDeleteSchema } from "../../src/strategy-management-contract.ts";
 import { reviewPrepareSchema, reviewDuplicateSchema, reviewIdeaSchema, reviewReferenceSchema, reviewDeleteSchema } from "../../src/review-contract.ts";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { Store } from "../store.ts";
@@ -35,6 +36,9 @@ import { feedCreateSchema, feedCreateToolSchema, feedDeleteSchema, feedServiceSc
 import { FeedCatalog } from "../feeds/catalog.ts";
 import { FeedService } from "../feeds/service.ts";
 import { DataFeeds, INTERVALS, type FetchSource } from "./data.ts";
+import { RunService } from "./runs.ts";
+import { DEFAULT_RUN_LIMIT, finished, runLimitSchema, runSubmitSchema, type Run, type RunSubmit } from "../../src/run-contract.ts";
+import { MANIFEST_FILE, readManifest, type ResearchManifest } from "../../src/research-manifest.ts";
 import { MARKETS } from "./binance-archive.ts";
 import { ViewChannel } from "./view-channel.ts";
 
@@ -66,10 +70,14 @@ export interface WorkbenchTool<I = any> {
  * from the window's selection. */
 export interface CallScope {
   idea?: string;
+  /** Adapters (MCP, Pi) call as "agent"; windows as "user" (the default). */
+  origin?: "user" | "agent";
 }
 export interface ToolContext {
   sid: string;
   wb: Workbench;
+  /** Who asked: the user through a window, or an agent through an adapter. */
+  origin: "user" | "agent";
 }
 export interface ToolManifest {
   name: string;
@@ -87,9 +95,9 @@ export const STAGE_GUIDANCE: Record<(typeof stageIds)[number], string> = {
   literature:
     "This conversation is the Literature stage. It works on the ideas the user decided to pursue: start from ideas_pursued (each idea at its latest saved version, with the decision reason and the sources it already cites). The window works on one focus idea at a time (ideas_pursued.focus; change it with literature_focus when asked): unless the user says otherwise, \"find papers\", ranking (source_importance with idea) and comments are about the focus idea, or about every pursued idea when there is no focus. For those ideas, find and import relevant papers when asked, read them, highlight and comment on the passages that support, contradict or refine each idea, and say which idea each finding bears on. Treat ideas not marked pursue as out of scope unless the user brings them in. When a passage bears on an idea, create the note with its stance (note_create with stance, or note_link): supports, contradicts or refines; idea_notes shows the evidence gathered for an idea so far. When a finding should change an idea, offer idea_add_note: it adds the note to the idea as an unsaved revision for the user to edit and save. Each pursued idea's coverage lists its gaps: use them to suggest what to read or look for next, especially evidence that could contradict an idea, and re-judge notes made on an earlier version.",
   research:
-    "This conversation is the Research Development stage for one pursued idea, and your working directory is that idea's own workspace (a git repository the app checkpoints). Develop the research with the user: write and run exploratory scripts and code with your own tools, produce documents there (markdown reports, figures, CSV tables, PDFs), and shape the research specification. Keep work for this idea in this folder. The user sees the files, the changes since the last checkpoint and the documents in the right-hand panes; record a checkpoint (rd_checkpoint, with a short message) when the user asks or offers one at meaningful points. Use idea_get or ideas_pursued for the idea itself and idea_notes for its literature evidence. Real data: the strategy's frozen snapshots are in data/ (read-only Parquet; data_snapshots lists them with their columns). Process them with polars, lazily for tick data (pl.scan_parquet on a snapshot folder, filter and aggregate before collect), rather than loading everything into memory. When the user asks for data, fetch it with data_fetch: tick-level trades, aggregated trades, 1s bars, order-book depth, best bid/ask, open interest, funding and option summaries from the Binance archive (spot, USDⓈ-M, COIN-M, options; data_estimate first for big ranges), or bars from Binance, Coinbase and FRED series; watch data_jobs; for other sources, such as Bloomberg or files the user has, write the file with the user's own code in the workspace and register it with data_register (with a note on its source). Never modify files in data/; derive new files in the workspace instead.",
+    "This conversation is the Research Development stage for one pursued idea, and your working directory is that idea's own workspace (a git repository the app checkpoints). Develop the research with the user: write and run exploratory scripts and code with your own tools, produce documents there (markdown reports, figures, CSV tables, PDFs), and shape the research specification. Keep work for this idea in this folder. The user sees the files, the changes since the last checkpoint and the documents in the right-hand panes; record a checkpoint (rd_checkpoint, with a short message) when the user asks or offers one at meaningful points. Use idea_get or ideas_pursued for the idea itself and idea_notes for its literature evidence. Real data: the strategy's frozen snapshots are in data/ (read-only Parquet; data_snapshots lists them with their columns). Process them with polars, lazily for tick data (pl.scan_parquet on a snapshot folder, filter and aggregate before collect), rather than loading everything into memory. When the user asks for data, fetch it with data_fetch: tick-level trades, aggregated trades, 1s bars, order-book depth, best bid/ask, open interest, funding and option summaries from the Binance archive (spot, USDⓈ-M, COIN-M, options; data_estimate first for big ranges), or bars from Binance, Coinbase and FRED series; watch data_jobs; for other sources, such as Bloomberg or files the user has, write the file with the user's own code in the workspace and register it with data_register (with a note on its source). Never modify files in data/; derive new files in the workspace instead. Results you will compare or report should come from recorded runs: declare entries in research.toml ([run.<name>] command = \"uv run python train.py\", optional inputs = [snapshot names]; [env] lock = \"uv.lock\"), start them with run_submit (they run a clean copy of the checkpoint, so edits after that do not change them), have the code write outputs/metrics.json (flat names → numbers) and other results to $PI_RESEARCH_OUTPUTS, follow them with run_status or run_logs, and compare with run_compare, which says when two runs are not like for like. You may start a limited number of runs and run minutes per hour (runs_list shows the limit and what is used); when a run needs more, say so and let the user start it.",
   data:
-    "This conversation is the Data stage, the first production stage. It works on the idea sent to production (production_status: its exact version, workspace checkpoint and the snapshots its research used) and builds production data for it: live and scheduled feeds, their contracts and quality checks. Production data is live and continuously updated, not exploratory; be precise about schemas, units, timing, latency and gaps.",
+    "This conversation is the Data stage, the first production stage. It works on the idea sent to production (production_status: its exact version, workspace checkpoint and the snapshots its research used) and builds production data for it: live and scheduled feeds, their contracts and quality checks. Production data is live and continuously updated, not exploratory; be precise about schemas, units, timing, latency and gaps. candidate_status shows the release candidate, its checks and validation runs; candidate_validate runs its entry on exactly its checkpoint.",
   code: "This conversation is the Design & Code stage: design and implement the strategy code.",
   backtests: "This conversation is the Backtests stage: plan and run experiments with exact inputs.",
   results: "This conversation is the Results stage: interpret results and write conclusions.",
@@ -626,6 +634,89 @@ export const tools: WorkbenchTool[] = [
     },
   }),
 
+  /* ── Runs: the workspace's code, executed and recorded ───────────── */
+  define({
+    name: "runs_list",
+    ideaField: "idea",
+    title: "List runs",
+    description:
+      "An idea's runs, newest first (status, entry or command, checkpoint, time, key metrics), the entries its research.toml offers, and the agent run limit with what has been used in the last hour.",
+    input: z.object({ idea: rdIdea, limit: z.number().int().min(1).max(200).optional() }).strict(),
+    readOnly: true,
+    run: async ({ sid, wb }, { idea, limit }) => wb.runsOverview(sid, idea, limit),
+  }),
+  define({
+    name: "run_submit",
+    ideaField: "idea",
+    title: "Run the workspace code",
+    description:
+      "Run the idea workspace's code as a recorded run: a research.toml [run.<entry>] or a shell command (e.g. \"uv run python train.py\"), in a clean copy of the workspace's checkpoint with data/ linked. Changes not yet checkpointed are checkpointed first, so the run records exactly what ran. The run writes results to $PI_RESEARCH_OUTPUTS (outputs/): outputs/metrics.json (flat names → numbers) becomes the run's metrics, and every file there is kept with its hash. Returns at once; follow it with run_status. Agents may use a limited number of runs and run minutes per hour; beyond that, ask the user.",
+    input: runSubmitSchema,
+    run: ({ sid, wb, origin }, input) => wb.submitRun(sid, input, origin),
+  }),
+  define({
+    name: "run_status",
+    title: "A run's status and results",
+    description: "One run: status and why it ended, the exact checkpoint, command, environment lock, hardware and data it used, wall time and peak memory, metrics, output files, and the end of its log.",
+    input: z.object({ run: z.uuid() }).strict(),
+    readOnly: true,
+    run: ({ sid, wb }, { run }) => ({ ...wb.runs.read(sid, run), logTail: wb.runs.log(sid, run).text.slice(-4000) }),
+  }),
+  define({
+    name: "run_logs",
+    title: "A run's log",
+    description: "A chunk of a run's log (stdout and stderr, up to 64 KiB) from offset; without offset, the end of the log. `next` is the offset to continue from.",
+    input: z.object({ run: z.uuid(), offset: z.number().int().min(0).optional() }).strict(),
+    readOnly: true,
+    run: ({ sid, wb }, { run, offset }) => wb.runs.log(sid, run, offset),
+  }),
+  define({
+    name: "run_cancel",
+    title: "Cancel a run",
+    description: "Stop a queued or running run. Its log and any outputs so far are kept.",
+    input: z.object({ run: z.uuid() }).strict(),
+    run: ({ sid, wb }, { run }) => wb.runs.cancel(sid, run),
+  }),
+  define({
+    name: "run_compare",
+    title: "Compare two runs",
+    description:
+      "Two runs side by side: what differs in how they ran (checkpoint, command, data snapshots, environment lock, hardware) and their metrics with differences. Warns when they are not like for like, so a metric difference may not come from the code change alone.",
+    input: z.object({ a: z.uuid(), b: z.uuid() }).strict(),
+    readOnly: true,
+    run: ({ sid, wb }, { a, b }) => compareRuns(wb.runs.read(sid, a), wb.runs.read(sid, b)),
+  }),
+  define({
+    name: "run_limit_set",
+    title: "Set the agent run limit",
+    description: "How many runs and run minutes an agent may use in any hour without the user. Only the user can change it.",
+    input: runLimitSchema,
+    run: ({ sid, wb, origin }, limit) => {
+      if (origin !== "user") throw new Error("Only the user can change the agent run limit (Runs pane).");
+      const r = wb.store.setRunLimit(sid, limit);
+      wb.view.publish(sid, { type: "refresh" });
+      return r;
+    },
+  }),
+
+  /* ── Release candidate ───────────────────────────────────────────── */
+  define({
+    name: "candidate_status",
+    title: "The release candidate",
+    description: "The current release candidate: its idea version, checkpoint, entry, data, the checks (environment lock, snapshots kept) and its validation runs; plus earlier candidates.",
+    input: z.object({}).strict(),
+    readOnly: true,
+    run: async ({ sid, wb }) => wb.candidateStatus(sid),
+  }),
+  define({
+    name: "candidate_validate",
+    title: "Validate the release candidate",
+    description:
+      "Run the current release candidate's entry (its research.toml entry or command) on exactly its checkpoint, as a recorded validation run. The workspace's later changes are not used. Counts towards the agent run limit.",
+    input: z.object({ entry: z.string().trim().min(1).max(1000).optional().describe("Override the candidate's entry for this run."), wallMinutes: z.number().int().min(1).max(1440).optional() }).strict(),
+    run: ({ sid, wb, origin }, input) => wb.validateCandidate(sid, input, origin),
+  }),
+
   /* ── Sources ─────────────────────────────────────────────────────── */
   define({
     name: "sources_list",
@@ -869,6 +960,7 @@ export class Workbench {
     this._service = s;
   }
   readonly data: DataFeeds;
+  readonly runs: RunService;
   readonly search: (sid: string, text: string) => Promise<import("../../desktop/papers.ts").PaperHit[] | null>;
   private byName = new Map(tools.map((t) => [t.name, t]));
   constructor(
@@ -881,6 +973,12 @@ export class Workbench {
     this.rd = new RdWorkspaces((sid) => store.storage.strategyRoot(sid));
     this.feeds = new FeedCatalog((sid) => store.storage.strategyRoot(sid));
     this.data = new DataFeeds((sid) => store.storage.strategyRoot(sid), papers);
+    this.runs = new RunService(
+      (sid) => store.storage.strategyRoot(sid),
+      () => store.ids(),
+      (sid) => this.data.snapshots(sid).map((s) => ({ name: s.name, file: s.file, sha256: s.sha256 })),
+      { onChange: (sid) => this.view.publish(sid, { type: "refresh" }) },
+    );
   }
 
   manifest(): ToolManifest[] {
@@ -903,7 +1001,7 @@ export class Workbench {
     const parsed = tool.input.safeParse(raw ?? {});
     if (!parsed.success)
       throw new Error(`Invalid input for ${name}: ${parsed.error.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; ").slice(0, 600)}`);
-    return tool.run({ sid, wb: this }, this.bind(sid, tool, parsed.data, scope));
+    return tool.run({ sid, wb: this, origin: scope.origin ?? "user" }, this.bind(sid, tool, parsed.data, scope));
   }
   /** Keep a bound conversation on its own idea, whatever the window shows. */
   private bind(sid: string, tool: WorkbenchTool, input: any, scope: CallScope) {
@@ -919,6 +1017,7 @@ export class Workbench {
     return input;
   }
   close() {
+    this.runs.close(); // runs themselves keep going; the next start reconciles them
     this._service?.dispose();
     this.view.close();
     return this.pdf.close();
@@ -1082,7 +1181,7 @@ export class Workbench {
     };
   }
   /** Freeze an idea for production: exact version, clean workspace checkpoint, snapshots used. */
-  async commitProduction(sid: string, input: { idea?: string; snapshots?: string[]; note?: string }) {
+  async commitProduction(sid: string, input: { idea?: string; snapshots?: string[]; note?: string; entry?: string }) {
     const target = input.idea ?? this.developIdea(sid);
     if (!target) throw new Error("No idea given and none is being developed in the window. Use ideas_pursued for targets.");
     const p = this.pursuedIdeas(sid).find((i) => i.target === target);
@@ -1111,10 +1210,133 @@ export class Workbench {
       committedAt: new Date().toISOString(),
     };
     const p0 = this.store.get(sid).production;
-    await this.rd.tag(dir, `candidate/${(p0?.history.length ?? 0) + (p0?.current ? 1 : 0) + 1}`, cp.sha);
+    const number = (p0?.history.length ?? 0) + (p0?.current ? 1 : 0) + 1;
+    const entry = input.entry ?? defaultEntry(readManifest(await this.rd.fileAt(dir, cp.sha, MANIFEST_FILE)).manifest);
+    Object.assign(commit, { number, ...(entry ? { entry } : {}) });
+    await this.rd.tag(dir, `candidate/${number}`, cp.sha);
     this.store.commitProduction(sid, commit);
     this.view.publish(sid, { type: "refresh" });
     return commit;
+  }
+  /* ── runs ──────────────────────────────────────────────────────── */
+  runLimit(sid: string) {
+    return this.store.get(sid).runLimit ?? DEFAULT_RUN_LIMIT;
+  }
+  /** What agents started in the last hour: runs, and the run minutes they asked for. */
+  agentUsage(sid: string) {
+    const since = Date.now() - 3600_000;
+    const recent = this.runs.list(sid).filter((r) => r.origin === "agent" && Date.parse(r.createdAt) >= since);
+    return { runs: recent.length, minutes: Math.round(recent.reduce((s, r) => s + r.wallSeconds / 60, 0)) };
+  }
+  private checkAgentLimit(sid: string, wallSeconds: number) {
+    const limit = this.runLimit(sid),
+      used = this.agentUsage(sid);
+    if (used.runs + 1 > limit.runs)
+      throw new Error(`The agent run limit is reached: ${limit.runs} run${limit.runs === 1 ? "" : "s"} per hour (${used.runs} used). Ask the user to start this run, or to raise the limit in the Runs pane.`);
+    if (used.minutes + wallSeconds / 60 > limit.minutes)
+      throw new Error(`This run would exceed the agent limit of ${limit.minutes} run minutes per hour (${used.minutes} used). Give a shorter wallMinutes (at most ${Math.max(0, limit.minutes - used.minutes)}), or ask the user.`);
+  }
+  /** The live workspace's research.toml (what the next checkpoint will hold). */
+  private liveManifest(dir: string) {
+    const f = path.join(dir, MANIFEST_FILE);
+    return readManifest(fs.existsSync(f) ? fs.readFileSync(f, "utf8") : null);
+  }
+  async runsOverview(sid: string, idea?: string, limit = 50) {
+    const { target, dir } = await this.rdWorkspace(sid, idea);
+    const { manifest, error } = this.liveManifest(dir);
+    return {
+      idea: target,
+      entries: entriesOf(manifest),
+      manifestError: error,
+      runs: this.runs.list(sid, target).slice(0, limit).map(runSummary),
+      limit: this.runLimit(sid),
+      agentUsage: this.agentUsage(sid),
+    };
+  }
+  /** Run the workspace's code: checkpoint changes first, so the run records exactly what ran. */
+  async submitRun(sid: string, input: RunSubmit, origin: "user" | "agent") {
+    const { target, dir } = await this.rdWorkspace(sid, input.idea);
+    const v = this.savedIdea(sid, target)!;
+    const wallSeconds = (input.wallMinutes ?? 60) * 60;
+    const { manifest, error } = this.liveManifest(dir);
+    const { entry, command, inputs } = resolveEntry(manifest, error, input.entry, input.command);
+    if (origin === "agent") this.checkAgentLimit(sid, wallSeconds);
+    let autoCheckpoint = false;
+    if ((await this.rd.changes(dir)).files.length) {
+      await this.rd.checkpoint(dir, `Before run: ${entry ?? command.slice(0, 80)}`);
+      autoCheckpoint = true;
+    }
+    const [cp] = await this.rd.history(dir, 1);
+    const run = this.runs.start(sid, {
+      idea: target,
+      title: this.savedContent(sid, v).title,
+      workspace: dir,
+      commit: cp.sha,
+      checkpointMessage: cp.message,
+      autoCheckpoint,
+      entry,
+      command,
+      inputs,
+      candidate: null,
+      origin,
+      wallSeconds,
+      ...(input.note ? { note: input.note } : {}),
+    });
+    this.view.publish(sid, { type: "refresh" });
+    return runSummary(run);
+  }
+  async candidateStatus(sid: string) {
+    const p = this.store.get(sid).production;
+    const c = p?.current;
+    if (!c) return { current: null, earlier: p?.history.length ?? 0 };
+    const n = candidateNumber(p!, c);
+    const runs = this.runs.list(sid).filter((r) => r.candidate === n);
+    const { dir } = await this.rdWorkspace(sid, c.idea);
+    const lock = await this.rd.fileAt(dir, c.checkpoint, "uv.lock");
+    const { manifest } = readManifest(await this.rd.fileAt(dir, c.checkpoint, MANIFEST_FILE));
+    const last = runs.find((r) => finished(r.status));
+    return {
+      current: { ...c, number: n },
+      checks: {
+        environmentLock: !!lock || !!manifest?.env?.lock,
+        snapshotsKept: c.snapshots.length,
+        entry: c.entry ?? defaultEntry(manifest) ?? null,
+      },
+      state: runs.some((r) => !finished(r.status)) ? "validating" : !last ? "not validated" : last.status === "succeeded" ? "passed" : "failed",
+      validationRuns: runs.map(runSummary),
+      earlier: p!.history.length,
+    };
+  }
+  /** Run the candidate's entry on exactly its checkpoint. */
+  async validateCandidate(sid: string, input: { entry?: string; wallMinutes?: number }, origin: "user" | "agent") {
+    const p = this.store.get(sid).production;
+    const c = p?.current;
+    if (!c) throw new Error("There is no release candidate yet. Create one in Research Development.");
+    const n = candidateNumber(p!, c);
+    const { dir } = await this.rdWorkspace(sid, c.idea);
+    const { manifest, error } = readManifest(await this.rd.fileAt(dir, c.checkpoint, MANIFEST_FILE));
+    const wanted = input.entry ?? c.entry ?? defaultEntry(manifest);
+    if (!wanted) throw new Error(`Say what validating runs: give entry (a command), or add a [run.validate] entry to ${MANIFEST_FILE} and create a new candidate.`);
+    const byName = manifest?.run?.[wanted];
+    const { entry, command, inputs } = byName ? resolveEntry(manifest, error, wanted, undefined) : { entry: null, command: wanted, inputs: [] as string[] };
+    const wallSeconds = (input.wallMinutes ?? 60) * 60;
+    if (origin === "agent") this.checkAgentLimit(sid, wallSeconds);
+    const run = this.runs.start(sid, {
+      idea: c.idea,
+      title: c.title,
+      workspace: dir,
+      commit: c.checkpoint,
+      checkpointMessage: c.checkpointMessage,
+      autoCheckpoint: false,
+      entry,
+      command,
+      inputs: [...new Set([...inputs, ...c.snapshots.map((s) => s.name)])],
+      candidate: n,
+      origin,
+      wallSeconds,
+    });
+    this.view.publish(sid, { type: "refresh" });
+    return runSummary(run);
   }
   /** Release candidates (current and earlier production commits) that used
    * this exact snapshot; while any is kept, its bytes must stay. */
@@ -1401,4 +1623,76 @@ export class Workbench {
     this.view.publish(sid, { type: "refresh" });
     return { updated: n.id };
   }
+}
+
+/* ── run helpers ────────────────────────────────────────────────────── */
+
+const entriesOf = (m: ResearchManifest | null) => Object.entries(m?.run ?? {}).map(([name, e]) => ({ name, command: e.command, description: e.description ?? null }));
+/** A candidate's default validation entry: "validate", else the only entry. */
+function defaultEntry(m: ResearchManifest | null) {
+  const names = Object.keys(m?.run ?? {});
+  return names.includes("validate") ? "validate" : names.length === 1 ? names[0] : undefined;
+}
+function resolveEntry(m: ResearchManifest | null, error: string | null, entry?: string, command?: string) {
+  if (entry) {
+    if (error) throw new Error(error);
+    const e = m?.run?.[entry];
+    if (!e) {
+      const names = Object.keys(m?.run ?? {});
+      throw new Error(`${MANIFEST_FILE} has no [run.${entry}]${names.length ? `; its entries are ${names.join(", ")}` : m ? " and no entries" : " (the workspace has none)"}. Give command instead, or add the entry.`);
+    }
+    return { entry, command: e.command, inputs: e.inputs ?? [] };
+  }
+  if (command) return { entry: null, command, inputs: [] as string[] };
+  const names = Object.keys(m?.run ?? {});
+  throw new Error(`Give entry or command${names.length ? ` (entries: ${names.join(", ")})` : ""}.`);
+}
+/** Candidates made before numbering: their place in the list. */
+function candidateNumber(p: { current: ProductionCommit | null; history: ProductionCommit[] }, c: ProductionCommit) {
+  return c.number ?? p.history.length + 1;
+}
+function runSummary(r: Run) {
+  return {
+    id: r.id,
+    idea: r.idea,
+    status: r.status,
+    reason: r.reason ?? null,
+    entry: r.entry,
+    command: r.command,
+    commit: r.commit,
+    checkpointMessage: r.checkpointMessage,
+    autoCheckpoint: r.autoCheckpoint,
+    candidate: r.candidate,
+    origin: r.origin,
+    createdAt: r.createdAt,
+    startedAt: r.startedAt ?? null,
+    endedAt: r.endedAt ?? null,
+    usage: r.usage ?? null,
+    metrics: r.metrics ?? {},
+    outputs: r.outputs?.length ?? 0,
+  };
+}
+/** What differs between two runs, their metrics side by side, and why they may not be like for like. */
+export function compareRuns(a: Run, b: Run) {
+  const same = (x: unknown, y: unknown) => JSON.stringify(x) === JSON.stringify(y);
+  const snaps = (r: Run) => r.snapshots.map((s) => `${s.name}@${s.sha256.slice(0, 8)}`).sort();
+  const differences = [
+    ...(a.commit !== b.commit ? [{ field: "checkpoint", a: `${a.commit.slice(0, 8)} ${a.checkpointMessage}`, b: `${b.commit.slice(0, 8)} ${b.checkpointMessage}` }] : []),
+    ...(a.command !== b.command ? [{ field: "command", a: a.command, b: b.command }] : []),
+    ...(!same(snaps(a), snaps(b)) ? [{ field: "data", a: snaps(a).join(", ") || "none", b: snaps(b).join(", ") || "none" }] : []),
+    ...(!same(a.environment.lock, b.environment.lock) ? [{ field: "environment lock", a: a.environment.lock?.sha256.slice(0, 12) ?? "none", b: b.environment.lock?.sha256.slice(0, 12) ?? "none" }] : []),
+    ...(!same(a.hardware, b.hardware) ? [{ field: "hardware", a: `${a.hardware.cpu} · ${a.hardware.cores} cores`, b: `${b.hardware.cpu} · ${b.hardware.cores} cores` }] : []),
+  ];
+  const warnings: string[] = [];
+  if (!same(snaps(a), snaps(b))) warnings.push("They used different data, so metric differences may come from the data rather than the code.");
+  if (a.command !== b.command) warnings.push("They ran different commands; check they compute the same metrics the same way.");
+  if (!same(a.environment.lock, b.environment.lock)) warnings.push("Their environments differ (lock file changed or missing).");
+  for (const r of [a, b]) if (r.status !== "succeeded") warnings.push(`Run ${r.id.slice(0, 8)} did not succeed (${r.status}); its metrics may be partial.`);
+  const names = [...new Set([...Object.keys(a.metrics ?? {}), ...Object.keys(b.metrics ?? {})])].sort();
+  const metrics = names.map((name) => {
+    const x = a.metrics?.[name],
+      y = b.metrics?.[name];
+    return { name, a: x ?? null, b: y ?? null, delta: typeof x === "number" && typeof y === "number" ? y - x : null };
+  });
+  return { a: runSummary(a), b: runSummary(b), differences, warnings, metrics, usage: { a: a.usage ?? null, b: b.usage ?? null } };
 }

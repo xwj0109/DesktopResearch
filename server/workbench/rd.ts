@@ -245,6 +245,16 @@ export class RdWorkspaces {
       if (at !== sha) throw new Error(`Tag ${name} already names another checkpoint.`);
     });
   }
+  /** One file's text as it is in a checkpoint (null when it isn't there). */
+  fileAt(dir: string, sha: string, rel: string) {
+    if (!/^[0-9a-f]{7,40}$/.test(sha) || !/^[A-Za-z0-9_./-]{1,200}$/.test(rel) || rel.split("/").includes("..")) throw new Error("Invalid path");
+    return this.serial(dir, () => this.git(dir, ["show", `${sha}:${rel}`], MAX_TEXT).catch(() => null));
+  }
+  /** The full id of a checkpoint in this workspace, or null if there is none such. */
+  commit(dir: string, rev: string) {
+    if (!/^([0-9a-f]{7,40}|HEAD|candidate\/\d{1,6})$/.test(rev)) throw new Error("Invalid checkpoint id");
+    return this.serial(dir, () => this.git(dir, ["rev-parse", "--verify", "--quiet", `${rev}^{commit}`]).then((s) => s.trim() || null, () => null));
+  }
   history(dir: string, limit = 50) {
     return this.serial(dir, () => this.log(dir, limit));
   }
