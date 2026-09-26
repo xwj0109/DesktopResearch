@@ -76,7 +76,7 @@ export interface StageLayout {
 /** Stage pane contracts from the product handover (§5). The Design & Code
  * arrangement — Pi upper left, graph lower left, code right — is fixed. */
 export const stageLayouts: Record<LayoutStage, StageLayout> = {
-  ideas: { a: ["pi"], c: ["sources", "idea"], split: 0.46, stack: 0.6 },
+  ideas: { a: ["pi"], c: ["idea", "sources"], split: 0.46, stack: 0.6 },
   literature: { a: ["pi"], c: ["sources"], split: 0.44, stack: 0.6 },
   // One workspace per pursued idea: its Pi on the left, its work on the right.
   research: { a: ["pi"], c: ["files", "changes", "documents", "snapshots", "spec", "sources"], split: 0.4, stack: 0.6 },
@@ -100,6 +100,8 @@ export interface LayoutState {
   outer?: "row" | "column";
   /** Inner split of the left column: a above b (`column`) or beside it (`row`). */
   inner?: "row" | "column";
+  /** Per tile, a second of its panes shown below the current tab (e.g. Changes below Documents). */
+  below?: Partial<Record<SlotId, string>>;
 }
 
 export const RATIO_MIN = 0.2,

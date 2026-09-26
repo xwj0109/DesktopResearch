@@ -6,6 +6,7 @@ import { asyncBufferFromFile, parquetReadObjects } from "hyparquet";
 import { isPublicAddress, type PaperDeps } from "../../desktop/papers.ts";
 import { Archive, headerlessColumns, zipEntry, type Market } from "../workbench/binance-archive.ts";
 import { cellOf, csvCells, inferColumns, readCompressors, type Column } from "../workbench/parquet.ts";
+import { materialise } from "../workbench/rd.ts";
 import { EVERY_MS, INTERVAL_MS, channelOf, feedDir, type Channel, type FeedDef, type FeedStatus, type Outage } from "./model.ts";
 import { PartitionWriter, partitionKey } from "./writer.ts";
 
@@ -776,8 +777,10 @@ export class ScriptWorker extends Worker {
   }
   private async run() {
     const d = this.def as Extract<FeedDef, { kind: "script" }>;
-    const cwd = path.join(this.strategyRoot, "Research-Workspaces", d.workspace);
-    if (!fs.existsSync(cwd)) throw new Error("The script's idea workspace does not exist");
+    const workspace = path.join(this.strategyRoot, "Research-Workspaces", d.workspace);
+    if (!fs.existsSync(workspace)) throw new Error("The script's idea workspace does not exist");
+    // Production scripts run their sent checkpoint; editing the workspace changes nothing here.
+    const cwd = d.checkpoint ? await materialise(workspace, d.checkpoint, path.join(this.dir, "source"), path.join(this.strategyRoot, "Data", "snapshots")) : workspace;
     const out = path.join(this.dir, "script-output");
     fs.rmSync(out, { force: true });
     const since = this.writer?.lastTime ? new Date(Number(this.writer.lastTime / 1000n)).toISOString() : `${d.backfillFrom}T00:00:00Z`;

@@ -1,5 +1,5 @@
 import { reviewMutationSchemas, reviewPrepareSchema } from "../src/review-contract.ts";
-import { ideaBoardOpSchema } from "../src/idea-board-contract.ts";
+import { ideaBoardOpSchema, ideaDecideInputSchema, ideaDeleteInputSchema, ideaSaveInputSchema } from "../src/idea-board-contract.ts";
 import { sourceImportanceSchema } from "../src/source-importance-contract.ts";
 import { ideaAddNoteSchema, noteLinkInputSchema } from "../src/note-link-contract.ts";
 import { productionCommitInputSchema } from "../src/production-contract.ts";
@@ -60,6 +60,9 @@ export function researchRequest(scope: Scope, request: LabRequest): boolean {
       read = true;
     else if (tail.startsWith("/native/reviews/")) schema = reviewMutationSchemas[tail.slice("/native/reviews/".length) as keyof typeof reviewMutationSchemas];
     else if (tail === "/native/ideas") schema = ideaBoardOpSchema;
+    else if (tail === "/native/idea-save") schema = ideaSaveInputSchema;
+    else if (tail === "/native/idea-decide") schema = ideaDecideInputSchema;
+    else if (tail === "/native/idea-delete") schema = ideaDeleteInputSchema;
     else if (tail === "/native/source-importance") schema = sourceImportanceSchema;
     else if (tail === "/native/note-links") schema = noteLinkInputSchema;
     else if (tail === "/native/idea-note") schema = ideaAddNoteSchema;

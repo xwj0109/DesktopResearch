@@ -212,7 +212,7 @@ const refusalSchema = z.discriminatedUnion("code", [
   z.object({ code: z.literal("full") }).strict(),
 ]);
 export function sourceRefusal(raw: Uint8Array, route: string) {
-  if (!/\/(artifacts\/[0-9a-f-]{36}\/(delete|restore)|annotations(\/[0-9a-f-]{36}\/delete)?|science\/commands|native\/reviews\/review_delete)$/.test(route))
+  if (!/\/(artifacts\/[0-9a-f-]{36}\/(delete|restore)|annotations(\/[0-9a-f-]{36}\/delete)?|science\/commands|native\/reviews\/review_delete|native\/idea-delete)$/.test(route))
     return undefined;
   try {
     const parsed = refusalSchema.safeParse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw)).refusal);
@@ -248,6 +248,7 @@ export function researchDTO(value: any, route: string): unknown {
   if (/\/native\/reviews\/review_delete$/.test(route)) return pick(value, ["deleted", "revision", "persistence"]);
   if (/\/native\/reviews\/review_create_idea$/.test(route)) return pick(value, ["target", "review"]);
   if (/\/native\/ideas$/.test(route)) return pick(value, ["ideas"]);
+  if (/\/native\/idea-(save|decide|delete)$/.test(route)) return pick(value, ["saved", "version", "decided", "onVersion", "deleted"]);
   if (/\/native\/source-importance$/.test(route)) return pick(value, ["artifactId", "importance"]);
   if (/\/native\/note-links$/.test(route)) return pick(value, ["noteId", "idea", "stance", "onVersion", "removed"]);
   if (/\/native\/idea-note$/.test(route)) return pick(value, ["idea", "added", "evidence", "shown"]);
@@ -268,7 +269,7 @@ export function researchDTO(value: any, route: string): unknown {
   if (/\/native\/data\/cancel$/.test(route)) return pick(value, ["job", "status"]);
   if (/\/native\/data\/delete$/.test(route)) return pick(value, ["deleted", "bytes", "references"]);
   if (/\/native\/data\/(preview\?|register$)/.test(route))
-    return pick(value, ["version", "name", "title", "file", "format", "source", "query", "createdAt", "rows", "columns", "types", "first", "last", "bytes", "sha256", "parts", "missing", "preview", "references"]);
+    return pick(value, ["version", "name", "title", "file", "format", "source", "query", "createdAt", "rows", "columns", "types", "first", "last", "bytes", "sha256", "parts", "missing", "preview", "references", "retainedBy"]);
   if (/\/native\/rd\/file\?/.test(route)) return pick(value, ["path", "kind", "bytes", "mime", "base64", "text", "truncated", "tooLarge"]);
   if (/\/native\/rd\/changes\?/.test(route)) return pick(value, ["files", "added", "removed"]);
   if (/\/native\/rd\/history\?/.test(route)) return pick(value, ["checkpoints", "sha", "files", "added", "removed"]);

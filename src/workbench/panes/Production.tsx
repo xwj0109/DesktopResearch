@@ -3,7 +3,7 @@ import { useResearch } from "../research";
 import { formatTime } from "../transcript";
 
 /** The production stages (Data, Design & Code, Backtests, Results) work on the
- * idea sent from Research Development: this bar states which, exactly. */
+ * release candidate created in Research Development: this bar states which, exactly. */
 export const PRODUCTION_STAGES = ["data", "code", "backtests", "results"];
 
 export function ProductionBar() {
@@ -11,20 +11,20 @@ export function ProductionBar() {
   const c = scope.view?.production?.current;
   if (!scope.view || scope.portfolio) return null;
   return (
-    <div className="rd-bar prod-bar" role="region" aria-label="In production">
-      <span className="lbl">production</span>
+    <div className="rd-bar prod-bar" role="region" aria-label="Release candidate">
+      <span className="lbl">candidate</span>
       {c ? (
         <>
           <span className="prod-title" title={c.title}>
             {c.title}
           </span>
           <span className="meta">
-            v{c.version} · checkpoint “{c.checkpointMessage}” ({c.checkpoint.slice(0, 8)}) · {c.snapshots.length} snapshot{c.snapshots.length === 1 ? "" : "s"} · sent {formatTime(c.committedAt)?.full ?? c.committedAt}
+            v{c.version} · checkpoint “{c.checkpointMessage}” ({c.checkpoint.slice(0, 8)}) · {c.snapshots.length} snapshot{c.snapshots.length === 1 ? "" : "s"} · created {formatTime(c.committedAt)?.full ?? c.committedAt}
           </span>
         </>
       ) : (
         <>
-          <span className="rd-none">Nothing in production yet. Send an idea from Research Development when you are convinced.</span>
+          <span className="rd-none">No release candidate yet. Create one in Research Development when you are convinced.</span>
           <button className="btn small ghost" onClick={() => scope.goToStage?.("research")}>
             Research Development →
           </button>
@@ -45,7 +45,7 @@ interface Preview {
 }
 const errorText = (e: unknown) => String(e instanceof Error ? e.message : e).replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
 
-/** Research Development → production: what gets frozen, then the commit. */
+/** Research Development → release candidate: what gets frozen, then the commit. */
 export function SendToProduction({ idea, onClose }: { idea: string; onClose: () => void }) {
   const scope = useResearch();
   const [p, setP] = useState<Preview | null>(null);
@@ -79,11 +79,11 @@ export function SendToProduction({ idea, onClose }: { idea: string; onClose: () 
     }
   };
   return (
-    <div className="prod-send" role="dialog" aria-label="Send to production">
+    <div className="prod-send" role="dialog" aria-label="Create release candidate">
       {sent ? (
         <>
           <p>
-            <b>“{p?.title}” v{p?.version} is in production.</b> The production stages now work on it, starting with Data.
+            <b>“{p?.title}” v{p?.version} is the release candidate.</b> Data, Design & Code, Backtests and Results now work on it, starting with Data.
           </p>
           <div className="row-actions">
             <button className="btn small primary" onClick={() => scope.goToStage?.("data")}>
@@ -100,14 +100,14 @@ export function SendToProduction({ idea, onClose }: { idea: string; onClose: () 
         <>
           <p>
             <b>
-              Send “{p.title}” v{p.version} to production?
+              Create a release candidate from “{p.title}” v{p.version}?
             </b>{" "}
-            This freezes the idea's exact version, the workspace checkpoint {p.checkpoint ? `“${p.checkpoint.message}” (${p.checkpoint.sha.slice(0, 8)}, ${formatTime(p.checkpoint.at)?.short ?? ""})` : ""} and the data it used.
-            {p.current ? (p.current.idea === idea ? ` It replaces v${p.current.version} in production.` : " It replaces the idea currently in production.") : ""}
+            This freezes the idea's exact version, the workspace checkpoint {p.checkpoint ? `“${p.checkpoint.message}” (${p.checkpoint.sha.slice(0, 8)}, ${formatTime(p.checkpoint.at)?.short ?? ""})` : ""} and the data it used. That data is kept while the candidate is.
+            {p.current ? (p.current.idea === idea ? ` It becomes the current candidate in place of v${p.current.version}; earlier candidates are kept.` : " It becomes the current candidate in place of another idea's; earlier candidates are kept.") : ""}
           </p>
           {p.pending > 0 && (
             <p className="notice error">
-              The workspace has {p.pending} change{p.pending === 1 ? "" : "s"} not yet checkpointed. Record a checkpoint in the Changes tab first, so production gets an exact state.
+              The workspace has {p.pending} change{p.pending === 1 ? "" : "s"} not yet checkpointed. Record a checkpoint in the Changes tab first, so the candidate is an exact state.
             </p>
           )}
           {p.snapshots.length > 0 && (
@@ -126,7 +126,7 @@ export function SendToProduction({ idea, onClose }: { idea: string; onClose: () 
           {error && <p className="notice error">{error}</p>}
           <div className="row-actions">
             <button className="btn small primary" disabled={busy || p.pending > 0 || !p.pursued} onClick={() => void send()}>
-              {busy ? "Sending…" : "Send to production"}
+              {busy ? "Creating…" : "Create release candidate"}
             </button>
             <button className="btn small ghost" disabled={busy} onClick={onClose}>
               Cancel

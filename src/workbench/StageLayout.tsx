@@ -1,4 +1,6 @@
 import { useRef, useState } from "react";
+import { PaneVisible } from "./usePoll";
+import { useBadge } from "./badges";
 import type { CSSProperties, ReactNode } from "react";
 import {
   activeTab,
@@ -128,10 +130,14 @@ export function StageLayout({
     const current = activeTab(slot, layout, state)!;
     const label = paneLabels[current];
     const holdsPi = tabs.includes("pi");
+    // A second pane below the current tab; never the same one twice.
+    const wanted = state.below?.[slot] as PaneKind | undefined;
+    const below = wanted && wanted !== current && tabs.includes(wanted) ? wanted : undefined;
+    const setBelow = (kind?: PaneKind) => set({ below: { ...state.below, [slot]: kind } });
     return (
       <section
         key={slot}
-        className={`tile slot slot-${slot} ${active === slot ? "active" : ""} ${drop === slot ? "drop" : ""}`}
+        className={`tile slot slot-${slot} ${active === slot ? "active" : ""} ${drop === slot ? "drop" : ""} ${below ? "split" : ""}`}
         data-slot={slot}
         data-pane={current}
         aria-label={label}
@@ -181,9 +187,21 @@ export function StageLayout({
                 onClick={() => set({ tabs: { ...state.tabs, [slot]: kind } })}
               >
                 {paneLabels[kind]}
+                <TabBadge kind={kind} />
               </button>
             ))}
             <span className="spacer" />
+            {!holdsPi && tabs.length > 1 && (
+              <button
+                className={`icon-btn ${below ? "on" : ""}`}
+                aria-label={below ? `Close ${paneLabels[below]} below` : "Show another pane below"}
+                aria-pressed={!!below}
+                title={below ? "Show one pane" : "Show another pane below"}
+                onClick={() => setBelow(below ? undefined : tabs.find((k) => k !== current))}
+              >
+                ⊟
+              </button>
+            )}
             <button
               className="icon-btn"
               aria-label={zoom === slot ? "Restore layout" : `Zoom ${label}`}
@@ -209,9 +227,23 @@ export function StageLayout({
             )}
           </div>
         )}
+        {below && (
+          <div className="below-head">
+            <select aria-label="Pane below" value={below} onChange={(e) => setBelow(e.target.value as PaneKind)}>
+              {tabs
+                .filter((k) => k !== current)
+                .map((k) => (
+                  <option key={k} value={k}>
+                    {paneLabels[k]}
+                  </option>
+                ))}
+            </select>
+            <TabBadge kind={below} />
+          </div>
+        )}
         {tabs.map((kind) => (
-          <div className="slot-body" key={kind} hidden={kind !== current}>
-            {render(kind, slot)}
+          <div className={`slot-body ${kind === below ? "below" : ""}`} key={kind} hidden={kind !== current && kind !== below}>
+            <PaneVisible.Provider value={(kind === current || kind === below) && visible(slot)}>{render(kind, slot)}</PaneVisible.Provider>
           </div>
         ))}
       </section>
@@ -254,4 +286,10 @@ export function StageLayout({
       {tile("c", { flex: "1 1 0" })}
     </div>
   );
+}
+
+/** A tab's count or mark, e.g. uncheckpointed changes or a new document. */
+function TabBadge({ kind }: { kind: string }) {
+  const badge = useBadge(kind);
+  return badge ? <span className="tab-badge" aria-label={`(${badge})`}>{badge}</span> : null;
 }

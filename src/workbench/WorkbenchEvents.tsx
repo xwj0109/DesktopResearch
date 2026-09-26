@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useResearch } from "./research";
-import { LITERATURE_FOCUS, RESEARCH_IDEA, SOURCE_NAVIGATION, type ViewEvent } from "../workbench-contract";
+import { CURRENT_IDEA, LITERATURE_OVERVIEW, SOURCE_NAVIGATION, chooseIdea, literatureFocus, type ViewEvent } from "../workbench-contract";
 import { developingIdea } from "./panes/ResearchDev";
 
 export const ACTIVE_IDEA = "ideas:active";
@@ -76,11 +76,14 @@ export function WorkbenchEvents({
           s.setDraft(ACTIVE_IDEA, e.target);
           reveal("idea");
           break;
+        // Literature's focus and Research Development's idea are one choice: the current idea.
         case "focus-idea":
-          s.setDraft(LITERATURE_FOCUS, e.target ?? "");
+          if (e.target) chooseIdea(s.setDraft, e.target);
+          else s.setDraft(LITERATURE_OVERVIEW, "1");
           break;
         case "develop-idea":
-          s.setDraft(RESEARCH_IDEA, e.target ?? "");
+          if (e.target) chooseIdea(s.setDraft, e.target);
+          else s.setDraft(CURRENT_IDEA, "");
           break;
       }
     };
@@ -113,7 +116,7 @@ export function WorkbenchEvents({
     page = active ? (JSON.parse(scope.drafts[`artifact:${active}`] ?? "{}").page ?? 0) : 0;
   } catch {}
   const idea = scope.drafts[ACTIVE_IDEA] ?? "";
-  const focus = scope.drafts[LITERATURE_FOCUS] ?? "";
+  const focus = literatureFocus(scope.view?.pursued ?? [], scope.drafts)?.target ?? "";
   const develop = developingIdea(scope.view, scope.drafts)?.target ?? "";
   useEffect(() => {
     if (scope.portfolio) return;

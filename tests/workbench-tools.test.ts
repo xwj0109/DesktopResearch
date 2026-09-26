@@ -600,6 +600,72 @@ test("data through the tools: fetch needs an interval for bars; a workspace file
   await assert.rejects(call("data_register", { path: "../../secret", title: "x" }), /Invalid path|outside/);
 });
 
+test("idea save, decide and delete: one set of checks for the Idea pane and agents", async (t) => {
+  const { call, store, sid } = setup(t);
+  const d = await call("idea_create", { title: "Carry" });
+  // A stray blank evidence row doesn't block saving; it is dropped, as in the pane.
+  await call("idea_update", { target: d.created, patch: { ...idea, evidence: [{ category: "cited", reference: { id: "", hash: "" }, description: "" }] } });
+  const { saved } = await call("idea_save", { target: d.created });
+  const v1 = await call("idea_get", { target: saved });
+  assert.deepEqual(v1.content.evidence, []);
+  // A decision names the version it was made on; a newer version refuses it.
+  await call("idea_update", { target: saved, patch: { horizon: "weekly" } });
+  await call("idea_save", { target: saved });
+  await assert.rejects(call("idea_decide", { target: saved, decision: "pursue", reason: "x", expectedHash: v1.hash }), /newer version \(v2\)/);
+  const v2 = await call("idea_get", { target: saved });
+  assert.deepEqual(await call("idea_decide", { target: saved, decision: "reject", reason: "No edge", expectedHash: v2.hash }), { decided: "reject", onVersion: 2 });
+  // Deleting is for archived ideas only, and clears it from the board.
+  await assert.rejects(call("idea_delete", { target: saved }), /Only archived ideas/);
+  await call("idea_update", { target: saved, patch: { rationale: "pending edit" } });
+  store.changeIdeas(sid, (b) => void b.archived.push(saved.slice(2)));
+  assert.deepEqual(await call("idea_delete", { target: saved }), { deleted: saved });
+  assert.deepEqual([store.ideaBoard(sid).archived, store.ideaBoard(sid).edits], [[], {}]);
+  assert.equal((await call("ideas_list", { includeArchived: true })).ideas.length, 0);
+});
+
+test("a conversation bound to one idea stays on it, whatever the window shows", async (t) => {
+  const { call, wb, sid, store } = setup(t);
+  const mk = async (title: string) => {
+    const d = await call("idea_create", { title });
+    await call("idea_update", { target: d.created, patch: idea });
+    const s = (await call("idea_save", { target: d.created })).saved as string;
+    await call("idea_decide", { target: s, decision: "pursue", reason: "Worth testing" });
+    return s;
+  };
+  const a = await mk("Funding carry");
+  const b = await mk("Book imbalance");
+  const dirOf = (i: string) => path.join(store.storage.strategyRoot(sid), "Research-Workspaces", i.slice(2));
+  for (const i of [a, b]) await call("rd_files", { idea: i });
+  // A's Pi keeps running while the user switches the window to B.
+  wb.view.setContext(sid, { developIdea: b });
+  fs.writeFileSync(path.join(dirOf(a), "a.py"), "print('a')\n");
+  fs.writeFileSync(path.join(dirOf(b), "b.py"), "print('b')\n");
+  const tool = async (name: string, args: unknown) => {
+    const r: any = await mcpHandle(wb, sid, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }, "research", a);
+    return { error: r.result.isError as boolean, text: r.result.content[0].text as string, value: r.result.structuredContent };
+  };
+  // An omitted idea means A's own, not the window's.
+  const cp = await tool("rd_checkpoint", { message: "A's work" });
+  assert.equal(cp.error, false, cp.text);
+  const history = (i: string) => call("rd_history", { idea: i }).then((h: any) => h.checkpoints.map((c: any) => c.message));
+  assert.deepEqual(await history(a), ["A's work", "Workspace created"]);
+  assert.deepEqual(await history(b), ["Workspace created"], "B untouched");
+  // Naming another idea: reads are allowed, changes refused with the reason.
+  assert.equal((await tool("rd_files", { idea: b })).error, false);
+  const refused = await tool("rd_checkpoint", { idea: b, message: "Wrong idea" });
+  assert.equal(refused.error, true);
+  assert.match(refused.text, /works on “Funding carry”.*may not change/);
+  assert.equal((await tool("idea_update", { target: b, patch: { horizon: "weekly" } })).error, true);
+  assert.equal((await tool("production_commit", { idea: b })).error, true);
+  // Idea tools default to the bound idea too.
+  await tool("idea_update", { patch: { horizon: "hourly" } });
+  assert.equal((await call("idea_get", { target: a })).content.horizon, "hourly");
+  // Without a bound idea (e.g. the Ideas stage), the window's choice still applies.
+  fs.writeFileSync(path.join(dirOf(b), "b2.py"), "print('b2')\n");
+  await call("rd_checkpoint", { message: "B's work" });
+  assert.deepEqual(await history(b), ["B's work", "Workspace created"]);
+});
+
 test("send to production: exact idea version, a clean checkpoint, the snapshots its code used; later commits replace, history kept", async (t) => {
   const { call, wb, sid, store } = setup(t);
   const mk = async (title: string, pursue: boolean) => {
@@ -630,6 +696,8 @@ test("send to production: exact idea version, a clean checkpoint, the snapshots 
   assert.deepEqual([c.idea, c.title, c.version, c.checkpoint, c.checkpointMessage, c.snapshots.map((s: any) => s.name), c.note], [kelly, "Age-invariant Kelly", 1, cp.sha, "Fit and report", ["prices"], "Positive enough to continue"]);
   assert.match(c.snapshots[0].sha256, /^[a-f0-9]{64}$/);
   assert.deepEqual((await call("production_status")).current.checkpoint, cp.sha);
+  const { execFileSync } = await import("node:child_process");
+  assert.equal(execFileSync("git", ["rev-parse", "candidate/1^{commit}"], { cwd: dir, encoding: "utf8" }).trim(), cp.sha, "the sent checkpoint is tagged");
   // A later commit (new idea version) replaces it; the first is kept.
   await call("idea_update", { target: kelly, patch: { horizon: "weekly" } });
   await call("idea_save", { target: kelly });
@@ -638,4 +706,9 @@ test("send to production: exact idea version, a clean checkpoint, the snapshots 
   assert.deepEqual((await call("production_status")).earlier, 1);
   assert.equal(store.get(sid).production!.history[0].version, 1);
   await assert.rejects(call("production_commit", { snapshots: ["nope"] }), /Snapshot nope not found/);
+  // Data a candidate used stays: the current commit's and the earlier one's.
+  assert.deepEqual((await call("data_preview", { name: "prices" })).retainedBy.map((c: any) => [c.version, c.current]), [[2, true], [1, false]]);
+  await assert.rejects(call("data_delete", { name: "prices" }), /kept by the release candidates “Age-invariant Kelly” v2, “Age-invariant Kelly” v1/);
+  await assert.rejects(call("data_delete", { name: "fx" }), /kept by the release candidate “Age-invariant Kelly” v2:/);
+  assert.deepEqual((await call("data_snapshots")).snapshots.map((s: any) => s.name).sort(), ["fx", "prices"]);
 });

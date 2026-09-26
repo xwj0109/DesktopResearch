@@ -215,6 +215,9 @@ export const feedDefSchema = z.discriminatedUnion("kind", [
       /** A command the user owns, run in an idea workspace (e.g. "python3 bloomberg.py"). */
       command: z.string().min(1).max(1000),
       workspace: z.string().regex(/^[0-9a-f-]{36}$/),
+      /** The checkpoint sent to production: the command runs in a clean copy of
+       * it, not the live workspace. Absent for an exploratory script. */
+      checkpoint: z.string().regex(/^[0-9a-f]{40}$/).optional(),
       every: z.enum(["15m", "1h", "6h", "1d"]),
       timeColumn: z.string().min(1).max(80),
       backfillFrom: day,

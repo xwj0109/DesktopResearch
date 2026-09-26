@@ -44,6 +44,24 @@ export type IdeaBoardState = z.infer<typeof ideaBoardSchema>;
 export const emptyIdeaBoard = (): IdeaBoardState => ({ cards: [], edits: {}, archived: [] });
 /** "d:<draft key>" or "r:<saved record id>". */
 export const ideaTargetSchema = z.string().regex(/^(d|r):[0-9a-f-]{36}$/);
+const targetField = ideaTargetSchema
+  .optional()
+  .describe('Idea target from ideas_list, "d:<id>" for a draft or "r:<id>" for a saved idea. Omit to use the idea open in the window.');
+/** Save, decide and delete: the same operations for the Idea pane and agents. */
+export const ideaSaveInputSchema = z.object({ target: targetField }).strict();
+export const ideaDecideInputSchema = z
+  .object({
+    target: targetField,
+    decision: z.enum(["pursue", "revise", "reject"]),
+    reason: z.string().trim().min(1).max(12000),
+    expectedHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional()
+      .describe("Hash of the version you inspected (idea_get); refused if the idea has a newer version since."),
+  })
+  .strict();
+export const ideaDeleteInputSchema = z.object({ target: z.string().regex(/^r:[0-9a-f-]{36}$/).describe("An archived saved idea (r:<id>).") }).strict();
 export const ideaBoardOpSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("create"), key: z.uuid(), content: ideaDraftContentSchema }).strict(),
   z.object({ op: z.literal("patch"), target: ideaTargetSchema, patch: ideaDraftPatchSchema }).strict(),

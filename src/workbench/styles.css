@@ -435,6 +435,33 @@ button.bar-item:hover {
   width: 232px;
   flex-shrink: 0;
 }
+/* Up to 1440px wide the rail keeps to stage numbers (names on hover), so the
+ * work and Pi get the width. */
+@media (max-width: 1440px) {
+  .tile.rail {
+    width: 52px;
+  }
+  .tile.rail > .tile-label,
+  .tile.rail .rail-ident > div,
+  .tile.rail .section-title,
+  .tile.rail .row .label,
+  .tile.rail .row.sub,
+  .tile.rail .rail-note {
+    display: none;
+  }
+  .tile.rail .rail-ident {
+    justify-content: center;
+  }
+  .tile.rail .row {
+    justify-content: center;
+    position: relative;
+  }
+  .tile.rail .row .mark {
+    position: absolute;
+    right: 4px;
+    top: 2px;
+  }
+}
 .tile.main {
   flex: 1;
 }
@@ -2207,6 +2234,28 @@ button.list-row:hover {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+/* A second pane below the current tab (⊟): the tile splits in half. */
+.tile.split > .below-head {
+  order: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+}
+.tile.split > .below-head select {
+  font: inherit;
+  color: var(--text-dim);
+  background: transparent;
+  border: 0;
+}
+.tile.split > .slot-body.below {
+  order: 3;
+}
+.tabs .icon-btn.on {
+  color: var(--accent);
 }
 .slot-body > .pane-inner,
 .slot-body > .empty {
@@ -4318,6 +4367,16 @@ label.list-row.check {
   min-width: 0;
   flex-shrink: 1;
 }
+/* Text handed to Pi before its terminal was ready: visible until pasted or discarded. */
+.pi-waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--yellow);
+  white-space: nowrap;
+}
 .pi-bar .spacer {
   flex: 1;
   min-width: 4px;
@@ -4461,6 +4520,49 @@ label.list-row.check {
   color: var(--text-dim);
   font-size: 11px;
   white-space: nowrap;
+}
+/* Where the developing idea stands: literature, changes, newest document. Each item is a link. */
+.idea-status {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+}
+.idea-status .is-item {
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: none;
+  border: 0;
+  padding: 3px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 32ch;
+  cursor: pointer;
+}
+.idea-status .is-item + .is-item::before {
+  content: "·";
+  margin-right: 8px;
+  color: var(--line);
+}
+.idea-status .is-item:hover,
+.idea-status .is-item:focus-visible {
+  color: var(--text);
+}
+.idea-status .is-item.warn {
+  color: var(--yellow);
+}
+.idea-status .is-item.new {
+  color: var(--accent);
+}
+.tabs [role="tab"] .tab-badge {
+  margin-left: 5px;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--bg);
+  background: var(--accent);
 }
 .rd-none,
 .rd-empty {

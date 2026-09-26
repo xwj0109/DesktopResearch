@@ -28,6 +28,7 @@ interface Snapshot {
   sha256: string;
   preview?: { head: string[][]; tail: string[][]; series: [string, number][]; valueColumn: string };
   references?: { idea: string; path: string }[];
+  retainedBy?: { idea: string; title: string; version: number; committedAt: string; current: boolean }[];
 }
 interface Job {
   id: string;
@@ -582,6 +583,12 @@ export function DataSnapshotsPane() {
                 <p>
                   <b>Delete “{selected.title}” for good?</b> Frees {size(selected.bytes)}. It cannot be restored; the same data can be fetched again as a new snapshot.
                 </p>
+                {detail?.name === selected.name && (detail.retainedBy?.length ?? 0) > 0 && (
+                  <p className="warn">
+                    Kept by the release candidate{detail.retainedBy!.length === 1 ? "" : "s"}{" "}
+                    {detail.retainedBy!.map((c) => `“${c.title}” v${c.version}`).join(", ")}. A candidate's data must stay so it can be run again, so it can't be deleted.
+                  </p>
+                )}
                 {detail?.name === selected.name && (detail.references?.length ?? 0) > 0 ? (
                   <div className="refs">
                     <p>Code that reads it will stop working:</p>
@@ -597,7 +604,7 @@ export function DataSnapshotsPane() {
                   <p className="dim">No code in the idea workspaces mentions data/{selected.file}.</p>
                 ) : null}
                 <div className="row-actions">
-                  <button className="btn small danger" disabled={deleting} onClick={() => void remove(selected)}>
+                  <button className="btn small danger" disabled={deleting || (detail?.name === selected.name && (detail.retainedBy?.length ?? 0) > 0)} onClick={() => void remove(selected)}>
                     {deleting ? "Deleting…" : "Delete for good"}
                   </button>
                   <button className="btn small ghost" disabled={deleting} onClick={() => setConfirming(null)}>

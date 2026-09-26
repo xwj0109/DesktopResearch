@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useResearch } from "../research";
+import { usePoll } from "../usePoll";
 import { formatTime } from "../transcript";
 import { ARCHIVE, DATASET_LABELS, SeriesChart, SymbolInput } from "./DataSnapshots";
 
@@ -144,26 +145,10 @@ const useSelectedFeed = () =>
     () => selected,
   );
 
+/** The feeds and the service (one shared request for Feeds, Explorer and Quality). */
 function useFeeds(everyMs = 2000) {
-  const scope = useResearch();
-  const [view, setView] = useState<FeedsView | null>(null);
-  const [error, setError] = useState("");
-  const live = useRef(true);
-  const load = () =>
-    scope.client.read<FeedsView>("/native/feeds").then(
-      (v) => live.current && (setView(v), setError("")),
-      (e) => live.current && setError(errorText(e)),
-    );
-  useEffect(() => {
-    live.current = true;
-    void load();
-    const t = setInterval(() => void load(), everyMs);
-    return () => {
-      live.current = false;
-      clearInterval(t);
-    };
-  }, []);
-  return { view, error, load };
+  const { data, error, reload } = usePoll<FeedsView>("/native/feeds", everyMs);
+  return { view: data ?? null, error: data ? "" : (error ?? ""), load: reload };
 }
 
 /** Pick a feed for Explorer and Quality (the one chosen in Feeds, else the first). */
@@ -676,7 +661,7 @@ export function FeedsPane() {
             <p className="rd-empty">
               {current
                 ? "No production feeds yet. Collect the research data live (above), or add a feed: exchange streams, scheduled pulls, or your own script (e.g. Bloomberg)."
-                : "No production feeds yet. Send an idea to production from Research Development, then collect its data live here."}
+                : "No production feeds yet. Create a release candidate in Research Development, then collect its data live here."}
             </p>
           )}
         </section>
@@ -698,25 +683,10 @@ export function FeedExplorerPane() {
   const scope = useResearch();
   const { view, error } = useFeeds(3000);
   const feed = useFeedChoice(view?.feeds);
-  const [rows, setRows] = useState<Rows | null>(null);
-  const [rowsError, setRowsError] = useState("");
   const id = feed?.def.id;
-  useEffect(() => {
-    setRows(null);
-    if (!id) return;
-    let live = true;
-    const load = () =>
-      scope.client.read<Rows>(`/native/feeds/rows?id=${id}`).then(
-        (r) => live && (setRows(r), setRowsError("")),
-        (e) => live && setRowsError(errorText(e)),
-      );
-    void load();
-    const t = setInterval(() => void load(), 3000);
-    return () => {
-      live = false;
-      clearInterval(t);
-    };
-  }, [id]);
+  const polled = usePoll<Rows>(id ? `/native/feeds/rows?id=${id}` : null, 3000);
+  const rows = polled.data ?? null;
+  const rowsError = polled.data ? "" : (polled.error ?? "");
   if (!view) return <div className="data-pane">{error ? <p className="notice error">{error}</p> : <p className="rd-empty">Loading…</p>}</div>;
   if (!feed) return <p className="rd-empty">No feeds yet. Create one in Feeds.</p>;
   const s = feed.status;

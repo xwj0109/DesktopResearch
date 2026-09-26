@@ -81,6 +81,11 @@ export function nativeRoutes(
         });
       }
 
+      // Save, decide and delete ideas: the registry operations agents use, with the same checks.
+      for (const [route, tool] of [["idea-save", "idea_save"], ["idea-decide", "idea_decide"], ["idea-delete", "idea_delete"]] as const)
+        app.post(base + "/" + route, async (req, res) => {
+          res.json(await workbench.call(z.uuid().parse(req.params.id), tool, req.body));
+        });
       // Idea board edits from the window (agents use the same Workbench).
       app.post(base + "/ideas", (req, res) => {
         const sid = z.uuid().parse(req.params.id);

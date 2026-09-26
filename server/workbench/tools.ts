@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { Store } from "../store.ts";
 import { hash as sha256 } from "../store.ts";
 import type { Platform } from "../platform.ts";
+import { pruneBlankItems } from "../../src/form-prune.ts";
 import { ideaSchema } from "../../src/platform.ts";
 import { findAll, locateQuote } from "../../src/workbench/pdfText.ts";
 import {
@@ -15,8 +16,7 @@ import {
   type IdeaBoardOp,
   type IdeaDraftContent,
   type IdeaBoardState,
-  ideaStatus,
-} from "../../src/idea-board-contract.ts";
+  ideaStatus, ideaDecideInputSchema, ideaDeleteInputSchema, ideaSaveInputSchema } from "../../src/idea-board-contract.ts";
 import {
   createPaperSearch,
   defaultPaperDeps,
@@ -55,7 +55,17 @@ export interface WorkbenchTool<I = any> {
   /** Hints for clients (MCP tool annotations); no behavioural effect here. */
   readOnly?: boolean;
   destructive?: boolean;
+  /** The input field naming the idea this tool acts on. In a conversation bound
+   * to one idea (CallScope), an omitted value means that idea, and changes to
+   * any other idea are refused; reads of other ideas stay allowed. */
+  ideaField?: "idea" | "target";
   run(ctx: ToolContext, input: I): Promise<unknown> | unknown;
+}
+/** Who is calling: a conversation bound to one saved idea (r:<id>), e.g. that
+ * idea's Research Development Pi. Set by the backend from the connection, never
+ * from the window's selection. */
+export interface CallScope {
+  idea?: string;
 }
 export interface ToolContext {
   sid: string;
@@ -217,6 +227,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "idea_get",
+    ideaField: "target",
     title: "Read an idea",
     description: "Read one idea in full: all fields, evidence, status, version, the last decision and its reason.",
     input: z.object({ target: optionalTarget }).strict(),
@@ -237,6 +248,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "idea_update",
+    ideaField: "target",
     title: "Edit an idea",
     description: "Change fields of an idea. Drafts are edited in place; a saved idea gets pending edits that become its next version when saved. Only the fields given are changed; evidence replaces the whole list.",
     input: z.object({ target: optionalTarget, patch: ideaDraftPatchSchema.refine((p) => Object.keys(p).length > 0, "Give at least one field to change") }).strict(),
@@ -250,17 +262,28 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "idea_save",
+    ideaField: "target",
     title: "Save an idea version",
     description: "Save the idea as an immutable scientific version (v1 for a draft, the next version for a saved idea with edits). All fields are required. Only when the user asks.",
-    input: z.object({ target: optionalTarget }).strict(),
+    input: ideaSaveInputSchema,
     run: ({ sid, wb }, { target }) => wb.saveIdea(sid, wb.resolveIdea(sid, target)),
   }),
   define({
     name: "idea_decide",
+    ideaField: "target",
     title: "Decide on an idea",
     description: "Record pursue, revise or reject, with a reason, on the latest saved version of an idea (it must have no unsaved edits). Pursue stays with the idea through later versions; revise and reject are answered by the next version, which returns it to to-decide. Only when the user asks.",
-    input: z.object({ target: optionalTarget, decision: z.enum(["pursue", "revise", "reject"]), reason: text.trim().min(1) }).strict(),
-    run: ({ sid, wb }, { target, decision, reason }) => wb.decideIdea(sid, wb.resolveIdea(sid, target), decision, reason),
+    input: ideaDecideInputSchema,
+    run: ({ sid, wb }, { target, decision, reason, expectedHash }) => wb.decideIdea(sid, wb.resolveIdea(sid, target), decision, reason, expectedHash),
+  }),
+  define({
+    name: "idea_delete",
+    ideaField: "target",
+    title: "Delete an archived idea",
+    description: "Permanently delete an archived idea: every version, the decisions on it and its stored text. Refused unless the idea is archived, and while another record cites it. Only on an explicit request to delete that idea.",
+    input: ideaDeleteInputSchema,
+    destructive: true,
+    run: ({ sid, wb }, { target }) => wb.deleteIdea(sid, target),
   }),
   define({
     name: "idea_open",
@@ -289,6 +312,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "rd_files",
+    ideaField: "idea",
     title: "List workspace files",
     description: "List the files in an idea's Research Development workspace (code, data, documents), with size, modification time and whether each is a document the Documents pane shows.",
     input: z.object({ idea: rdIdea }).strict(),
@@ -300,6 +324,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "rd_read",
+    ideaField: "idea",
     title: "Read a workspace file",
     description: "Read one file of an idea's workspace (text up to 1 MiB; PDFs and images as base64).",
     input: z.object({ idea: rdIdea, path: z.string().min(1).max(500) }).strict(),
@@ -308,6 +333,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "rd_changes",
+    ideaField: "idea",
     title: "Changes since the last checkpoint",
     description: "The files changed in an idea's workspace since its last checkpoint: status (A new, M modified, D deleted), lines added and removed (binary files flagged), and totals. Read one file's diff with rd_diff.",
     input: z.object({ idea: rdIdea }).strict(),
@@ -316,6 +342,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "rd_diff",
+    ideaField: "idea",
     title: "One file's diff",
     description: "The unified diff of one file in an idea's workspace: against the last checkpoint, or within a checkpoint (sha from rd_history). Capped at 512 KiB per file (truncated says so).",
     input: z.object({ idea: rdIdea, path: z.string().min(1).max(500), sha: z.string().regex(/^[0-9a-f]{7,40}$/).optional() }).strict(),
@@ -324,6 +351,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "rd_checkpoint",
+    ideaField: "idea",
     title: "Record a checkpoint",
     description: "Record the workspace's current state as a checkpoint (a git commit) with a short message, so later changes are shown against it. Refused when nothing changed.",
     input: z.object({ idea: rdIdea, message: z.string().trim().min(1).max(500) }).strict(),
@@ -335,6 +363,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "rd_history",
+    ideaField: "idea",
     title: "Workspace checkpoints",
     description: "The checkpoints of an idea's workspace, newest first; give sha for one checkpoint's files (status and line counts), then rd_diff with that sha for a file.",
     input: z.object({ idea: rdIdea, sha: z.string().regex(/^[0-9a-f]{7,40}$/).optional() }).strict(),
@@ -348,15 +377,17 @@ export const tools: WorkbenchTool[] = [
   /* ── Production (after Research Development) ─────────────────────── */
   define({
     name: "production_commit",
-    title: "Send an idea to production",
+    ideaField: "idea",
+    title: "Create a release candidate",
     description:
-      "Send a pursued idea from Research Development to the production stages (Data, Design & Code, Backtests, Results). Freezes the idea's exact version, its workspace checkpoint and the data snapshots the work used (default: those its code references). Refused while the workspace has changes not yet checkpointed. Replaces the current production idea (earlier commits are kept). Only when the user asks.",
+      "Create a release candidate from a pursued idea in Research Development, for the production stages (Data, Design & Code, Backtests, Results) to work on. Freezes the idea's exact version, its workspace checkpoint and the data snapshots the work used (default: those its code references). Refused while the workspace has changes not yet checkpointed. Replaces the current production idea (earlier commits are kept). Only when the user asks.",
     input: productionCommitInputSchema,
     run: async ({ sid, wb }, input) => wb.commitProduction(sid, input),
   }),
   define({
     name: "production_preview",
-    title: "Preview sending an idea to production",
+    ideaField: "idea",
+    title: "Preview a release candidate",
     description: "What production_commit would freeze for an idea: its version, the workspace's last checkpoint, changes not yet checkpointed (which block the commit), and the data snapshots with whether its code references them.",
     input: z.object({ idea: z.string().regex(/^r:[0-9a-f-]{36}$/).optional() }).strict(),
     readOnly: true,
@@ -391,11 +422,13 @@ export const tools: WorkbenchTool[] = [
     name: "feed_create",
     title: "Create a production feed",
     description:
-      'Create a production feed; the background service starts collecting it within seconds when collection is on. kind "stream": a live exchange stream (Binance spot/um/cm: trades, aggTrades, klines, bookTicker, depth10, markPrice, liquidations; Coinbase: trades, ticker), optionally backfilling complete past days from the Binance archive. kind "pull": scheduled incremental pulls (binance-archive datasets, Binance or Coinbase bars, FRED). kind "script": the user\'s own command run on a schedule in an idea workspace, writing CSV or Parquet to $PI_RESEARCH_OUT (rows after $PI_RESEARCH_SINCE). Data lands in hourly (streams) or daily partitions, frozen once closed. Only when the user asks.',
+      'Create a production feed; the background service starts collecting it within seconds when collection is on. kind "stream": a live exchange stream (Binance spot/um/cm: trades, aggTrades, klines, bookTicker, depth10, markPrice, liquidations; Coinbase: trades, ticker), optionally backfilling complete past days from the Binance archive. kind "pull": scheduled incremental pulls (binance-archive datasets, Binance or Coinbase bars, FRED). kind "script": the user\'s own command run on a schedule in an idea workspace (for the idea in production, in a clean copy of its sent checkpoint, so later edits to the workspace do not change it), writing CSV or Parquet to $PI_RESEARCH_OUT (rows after $PI_RESEARCH_SINCE). Data lands in hourly (streams) or daily partitions, frozen once closed. Only when the user asks.',
     input: feedCreateToolSchema,
     run: ({ sid, wb }, raw) => {
       const input = feedCreateSchema.parse(raw);
-      const def = wb.feeds.create(sid, input, () => wb.store.get(sid).production?.current?.idea.slice(2));
+      const current = wb.store.get(sid).production?.current;
+      // A script for the idea in production runs its sent checkpoint, not the live workspace.
+      const def = wb.feeds.create(sid, input, () => current?.idea.slice(2), (ws) => (current && current.idea === `r:${ws}` ? current.checkpoint : undefined));
       wb.view.publish(sid, { type: "refresh" });
       return def;
     },
@@ -471,7 +504,7 @@ export const tools: WorkbenchTool[] = [
     description: "One snapshot's manifest with a preview (first and last rows, a thinned series of its close/value column) and the code in idea workspaces that references its file.",
     input: z.object({ name: z.string().regex(/^[a-z0-9-]{1,120}$/) }).strict(),
     readOnly: true,
-    run: ({ sid, wb }, { name }) => ({ ...wb.data.snapshot(sid, name), references: wb.data.references(sid, name) }),
+    run: ({ sid, wb }, { name }) => ({ ...wb.data.snapshot(sid, name), references: wb.data.references(sid, name), retainedBy: wb.retainedBy(sid, name) }),
   }),
   define({
     name: "data_symbols",
@@ -558,10 +591,13 @@ export const tools: WorkbenchTool[] = [
     name: "data_delete",
     title: "Delete a data snapshot",
     description:
-      "Delete a data snapshot for good (its file or daily folder and its manifest), freeing the disk. It cannot be restored; the source can be fetched again as a new snapshot. Returns the code in idea workspaces that referenced it. Only on an explicit request to delete that snapshot; check data_preview and tell the user what referenced it.",
+      "Delete a data snapshot for good (its file or daily folder and its manifest), freeing the disk. Refused while a release candidate (production commit, current or earlier) uses it. It cannot be restored; the source can be fetched again as a new snapshot. Returns the code in idea workspaces that referenced it. Only on an explicit request to delete that snapshot; check data_preview and tell the user what referenced it.",
     input: z.object({ name: z.string().regex(/^[a-z0-9-]{1,120}$/) }).strict(),
     destructive: true,
     run: ({ sid, wb }, { name }) => {
+      const kept = wb.retainedBy(sid, name);
+      if (kept.length)
+        throw new Error(`Snapshot ${name} is kept by the release candidate${kept.length === 1 ? "" : "s"} ${kept.map((c) => `“${c.title}” v${c.version}`).join(", ")}: a candidate's data must stay so it can be run again.`);
       const r = wb.data.delete(sid, name);
       wb.view.publish(sid, { type: "refresh" });
       return r;
@@ -576,6 +612,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "data_register",
+    ideaField: "idea",
     title: "Register a file as a data snapshot",
     description:
       "Freeze a data file from an idea's workspace (CSV, CSV.GZ, TSV, Parquet or JSON; e.g. written by the user's own code from Bloomberg or another paid feed) as a shared snapshot with provenance. The file is copied; give a title and a note saying where it came from.",
@@ -724,6 +761,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "note_link",
+    ideaField: "idea",
     title: "Link a note to an idea",
     description:
       'Say how a highlight or comment bears on an idea: supports, contradicts or refines it ("unclassified" links without a stance, "none" removes the link). The link records the idea\'s current version. Omit idea to use the Literature focus. The note itself is unchanged.',
@@ -740,6 +778,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "idea_add_note",
+    ideaField: "idea",
     title: "Add a note to an idea as evidence",
     description:
       "Revise an idea from a finding: add a highlight or comment (quote, page, comment, and its stance on the idea) to the idea's evidence as an unsaved revision, and open it in the Idea pane. Nothing is saved as a version; the user edits and saves it (a pursued idea stays pursued). Omit idea to use the Literature focus. The same note is not added twice.",
@@ -748,6 +787,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "idea_notes",
+    ideaField: "idea",
     title: "Notes on an idea",
     description:
       "The highlights and comments linked to an idea, with stance, source, page, quote and the idea version each was judged against; plus counts by stance. Omit idea to use the Literature focus.",
@@ -804,6 +844,8 @@ export interface IdeaSummary {
   target: string;
   status: "draft" | "to-decide" | "pursue" | "revise" | "reject";
   version: number | null;
+  /** The latest saved version's hash (pass as expectedHash when deciding). */
+  hash?: string;
   edited: boolean;
   archived: boolean;
   content: IdeaDraftContent;
@@ -854,14 +896,27 @@ export class Workbench {
     });
   }
   /** The single entry point every adapter uses. Throws readable errors. */
-  async call(sid: string, name: string, raw: unknown) {
+  async call(sid: string, name: string, raw: unknown, scope: CallScope = {}) {
     const tool = this.byName.get(name);
     if (!tool) throw new Error(`Unknown workbench tool: ${name}`);
     if (sid.startsWith("portfolio:")) throw new Error("Open a strategy to use the workbench panes.");
     const parsed = tool.input.safeParse(raw ?? {});
     if (!parsed.success)
       throw new Error(`Invalid input for ${name}: ${parsed.error.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; ").slice(0, 600)}`);
-    return tool.run({ sid, wb: this }, parsed.data);
+    return tool.run({ sid, wb: this }, this.bind(sid, tool, parsed.data, scope));
+  }
+  /** Keep a bound conversation on its own idea, whatever the window shows. */
+  private bind(sid: string, tool: WorkbenchTool, input: any, scope: CallScope) {
+    const field = tool.ideaField;
+    if (!field || !scope.idea) return input;
+    const given = input[field];
+    if (given === undefined || given === null) return { ...input, [field]: scope.idea };
+    if (given !== scope.idea && !tool.readOnly) {
+      const v = this.savedIdea(sid, scope.idea);
+      const title = v ? `“${this.savedContent(sid, v).title}” (${scope.idea})` : scope.idea;
+      throw new Error(`This conversation works on ${title}, so ${tool.name} may not change ${given}. Do that in the other idea's own conversation, or in the Ideas stage.`);
+    }
+    return input;
   }
   close() {
     this._service?.dispose();
@@ -911,6 +966,7 @@ export class Workbench {
         target: `r:${v.id}`,
         status: this.status(sid, v).status,
         version: v.version,
+        hash: v.hash,
         edited: !!board.edits[v.id],
         archived: board.archived.includes(v.id),
         content: board.edits[v.id] ?? this.savedContent(sid, v),
@@ -1054,9 +1110,20 @@ export class Workbench {
       ...(input.note ? { note: input.note } : {}),
       committedAt: new Date().toISOString(),
     };
+    const p0 = this.store.get(sid).production;
+    await this.rd.tag(dir, `candidate/${(p0?.history.length ?? 0) + (p0?.current ? 1 : 0) + 1}`, cp.sha);
     this.store.commitProduction(sid, commit);
     this.view.publish(sid, { type: "refresh" });
     return commit;
+  }
+  /** Release candidates (current and earlier production commits) that used
+   * this exact snapshot; while any is kept, its bytes must stay. */
+  retainedBy(sid: string, name: string) {
+    const sha = this.data.snapshot(sid, name).sha256;
+    const p = this.store.get(sid).production;
+    return [...(p?.current ? [p.current] : []), ...(p?.history ?? [])]
+      .filter((c) => c.snapshots.some((x) => x.name === name && x.sha256 === sha))
+      .map((c) => ({ idea: c.idea, title: c.title, version: c.version, committedAt: c.committedAt, current: c === p?.current }));
   }
   /** The idea Research Development works on in the window, if still saved. */
   developIdea(sid: string) {
@@ -1189,7 +1256,8 @@ export class Workbench {
   saveIdea(sid: string, target: string) {
     const i = this.ideas(sid).find((x) => x.target === target)!;
     if (target.startsWith("r:") && !i.edited) throw new Error("This idea has no unsaved edits; its latest version is already saved.");
-    const parsed = ideaSchema.safeParse(i.content);
+    // Evidence rows added but left completely blank are dropped, as in the Idea pane.
+    const parsed = ideaSchema.safeParse(pruneBlankItems(ideaSchema, i.content));
     if (!parsed.success)
       throw new Error(`Cannot save yet: ${parsed.error.issues.map((x) => `${x.path.join(".")}: ${x.code === "too_small" ? "required" : x.message}`).join("; ")}`);
     const recordId = target.startsWith("r:") ? target.slice(2) : undefined;
@@ -1209,12 +1277,13 @@ export class Workbench {
     this.view.publish(sid, { type: "refresh" });
     return { saved: next, version: saved.version };
   }
-  decideIdea(sid: string, target: string, decision: "pursue" | "revise" | "reject", reason: string) {
+  decideIdea(sid: string, target: string, decision: "pursue" | "revise" | "reject", reason: string, expectedHash?: string) {
     if (!target.startsWith("r:")) throw new Error("Save the draft before recording a decision on it.");
     const i = this.ideas(sid).find((x) => x.target === target)!;
     if (i.edited) throw new Error("This idea has unsaved edits. Save or discard them first: a decision applies to an exact saved version.");
     if (i.archived) throw new Error("This idea is archived. Restore it in the Idea pane first.");
     const v = this.latestSaved(sid).get(target.slice(2))!;
+    if (expectedHash && expectedHash !== v.hash) throw new Error(`This idea has a newer version (v${v.version}) than the one you decided on. Look at it and decide again.`);
     this.platform.command(sid, {
       operationId: randomUUID(),
       revision: this.platform.strategyView(sid).revision,
@@ -1222,6 +1291,19 @@ export class Workbench {
     });
     this.view.publish(sid, { type: "refresh" });
     return { decided: decision, onVersion: v.version };
+  }
+  /** Permanently delete an archived idea, then drop it from the board. */
+  deleteIdea(sid: string, target: string) {
+    const id = target.slice(2);
+    if (!this.latestSaved(sid).has(id)) throw new Error(`Idea ${target} is not a saved idea.`);
+    if (!this.store.ideaBoard(sid).archived.includes(id)) throw new Error("Only archived ideas can be deleted. Archive it first (× in the Idea pane).");
+    this.platform.command(sid, { operationId: randomUUID(), revision: this.platform.strategyView(sid).revision, command: { type: "idea.delete", id } });
+    this.store.changeIdeas(sid, (b) => {
+      delete b.edits[id];
+      b.archived = b.archived.filter((x) => x !== id);
+    });
+    this.view.publish(sid, { type: "refresh" });
+    return { deleted: target };
   }
 
   /* ── sources ───────────────────────────────────────────────────── */

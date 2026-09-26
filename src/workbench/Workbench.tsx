@@ -8,7 +8,7 @@ import type { ViewState } from "../../desktop/contracts";
 import { sessionKey, updateDraft } from "./model";
 import type { Material, MaterialTab, StageId, Thread, WorkbenchData } from "./model";
 import { NativeConversation, type RuntimeSummary } from "./NativeConversation";
-import { PiTerminal, pasteIntoTerminal } from "./PiTerminal";
+import { PiTerminal, handToPi } from "./PiTerminal";
 import { ChangesPane, DocumentsPane, FilesPane, ResearchIdeaBar, developingIdea } from "./panes/ResearchDev";
 import { DataSnapshotsPane } from "./panes/DataSnapshots";
 import { PRODUCTION_STAGES, ProductionBar } from "./panes/Production";
@@ -1084,6 +1084,7 @@ export function Workbench({ data, native }: { data: WorkbenchData; native?: Nati
                             <button
                               className="row"
                               data-stage={item.id}
+                              title={`${item.label}  ⌘${index + 1}`}
                               onClick={() => navigate(item.id)}
                               aria-current={current ? "page" : undefined}
                             >
@@ -1129,7 +1130,7 @@ export function Workbench({ data, native }: { data: WorkbenchData; native?: Nati
                 )}
                 <div className="rail-foot">
                   {native && (
-                    <button className="row" onClick={native.onLauncher}>
+                    <button className="row" title="Workspace launcher" onClick={native.onLauncher}>
                       <span className="num">⌂</span>
                       <span className="label">Workspace launcher</span>
                     </button>
@@ -1204,13 +1205,14 @@ export function Workbench({ data, native }: { data: WorkbenchData; native?: Nati
         drafts: researchDrafts,
         setDraft: changeResearchDraft,
         setComposer: (text) => {
-          if (conversationId && pasteIntoTerminal(conversationId, text)) return;
+          // With the real Pi CLI in the pane, text goes into its input (or waits, visibly, until it can).
+          if (conversationId && native?.client?.bridge.terminalOpen) return void handToPi(conversationId, text);
           changeDraft(text);
           focusComposer();
         },
         appendComposer: (text) => {
-          // With the real Pi CLI in the pane, "Ask Pi" types into it.
-          if (conversationId && pasteIntoTerminal(conversationId, text)) return;
+          // With the real Pi CLI in the pane, "Ask Pi" types into it (or waits, visibly, until it can).
+          if (conversationId && native?.client?.bridge.terminalOpen) return void handToPi(conversationId, text);
           const current = (snapshot.current.drafts as Record<string, string>)[key] ?? "";
           changeDraft(appendReviewMessage(current, text));
           focusComposer();
