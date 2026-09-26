@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { Store } from "../store.ts";
-import { STAGE_GUIDANCE, WORKBENCH_INSTRUCTIONS, type Workbench } from "./tools.ts";
+import { IDEA_GUIDANCE, STAGE_GUIDANCE, WORKBENCH_INSTRUCTIONS, type Workbench } from "./tools.ts";
 
 /** MCP adapter over the workbench registry (JSON-RPC 2.0, Streamable HTTP in
  * JSON-response mode, no SSE). Any MCP client (Claude Code, Codex, Cursor, …)
@@ -97,7 +97,7 @@ export class McpAccess {
 function ideaLine(wb: Workbench, sid: string, idea?: string) {
   if (!idea) return "";
   const i = wb.ideas(sid).find((x) => x.target === idea);
-  return i ? ` The idea this conversation develops is “${i.content.title}” (${idea}, v${i.version}); rd_* tools default to its workspace when the window shows it.` : "";
+  return i ? ` The idea this conversation develops is “${i.content.title}” (${idea}, v${i.version}); tools that take an idea default to it, whatever the window shows, and changes to other ideas are refused.` : "";
 }
 type Message = { jsonrpc?: string; id?: string | number | null; method?: string; params?: any };
 const reply = (id: Message["id"], result: unknown) => ({ jsonrpc: "2.0", id, result });
@@ -121,7 +121,8 @@ export async function mcpHandle(wb: Workbench, sid: string, body: unknown, stage
           protocolVersion: PROTOCOLS.includes(asked) ? asked : PROTOCOLS[0],
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "pi-research", title: "Pi Research workbench", version: "0.1.0" },
-          instructions: `${WORKBENCH_INSTRUCTIONS} Strategy: ${wb.store.get(sid).name}.${stage ? ` ${STAGE_GUIDANCE[stage]}` : ""}${ideaLine(wb, sid, idea)}`,
+          // An idea's conversation spans its stages; any other follows its stage.
+          instructions: `${WORKBENCH_INSTRUCTIONS} Strategy: ${wb.store.get(sid).name}.${idea ? ` ${IDEA_GUIDANCE}` : stage ? ` ${STAGE_GUIDANCE[stage]}` : ""}${ideaLine(wb, sid, idea)}`,
         });
       }
       case "ping":
@@ -139,7 +140,7 @@ export async function mcpHandle(wb: Workbench, sid: string, body: unknown, stage
       case "tools/call": {
         const name = String(m.params?.name ?? "");
         try {
-          const result = await wb.call(sid, name, m.params?.arguments ?? {});
+          const result = await wb.call(sid, name, m.params?.arguments ?? {}, { idea, origin: "agent" });
           return reply(m.id, {
             content: [{ type: "text", text: JSON.stringify(result) }],
             ...(result && typeof result === "object" && !Array.isArray(result) ? { structuredContent: result } : {}),

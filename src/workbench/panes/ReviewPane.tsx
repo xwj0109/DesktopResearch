@@ -269,7 +269,7 @@ export function ReviewPane({
       return;
     }
     setHandoff(
-      `Review attached to the current conversation. Your existing draft is preserved; press Send when ready.${b.destination !== stageDestinations[scope.stage] ? ` This snapshot was prepared for ${b.destination}.` : ""}`,
+      `Review attached to the current conversation. Your existing draft is preserved; send it in Pi when ready.${b.destination !== stageDestinations[scope.stage] ? ` This snapshot was prepared for ${b.destination}.` : ""}`,
     );
   };
   const navigate = (n: Annotation) => {

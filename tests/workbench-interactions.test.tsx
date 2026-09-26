@@ -612,7 +612,7 @@ test("Literature focus: pick a pursued idea, then sections, keys and new papers 
 
   // Focus an idea from the overview: its ranks drive the sections.
   await act(async () => overview.findAll((n) => n.type === "button")[0].props.onClick());
-  assert.equal(drafts["literature:focus"], `r:${A}`);
+  assert.equal(drafts["idea:current"], `r:${A}`, "the focus is the window's current idea");
   assert.deepEqual(tabs()[1], ["Kelly with a drawdown cap", true]);
   assert.match(text(root.findByProps({ "aria-label": "Literature focus" })), /v3 · pursued since v1.*“Clean test”.*2 papers · 3 notes.*Next: Look for evidence that could contradict it/, "the focused idea shows its evidence and one next step");
   assert.deepEqual(groups(), ["Primary sources · 1", "Secondary sources · 1", "Other sources · 1"]);
@@ -805,7 +805,7 @@ test("Research Development: the bar says which idea is developed; Files, Changes
 
   // Choosing another idea switches every pane to its workspace.
   await act(async () => root.findByProps({ "aria-label": "Idea to develop" }).findAll((n) => n.type === "button")[1].props.onClick());
-  assert.equal(drafts["research:idea"], B);
+  assert.equal(drafts["idea:current"], B, "one current idea for the window");
   await settle();
   assert.ok(reads.some((r) => r === `/native/rd/files?idea=${B}`));
 });

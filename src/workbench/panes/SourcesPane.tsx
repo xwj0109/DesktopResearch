@@ -1,5 +1,5 @@
 import { ReviewPane } from "./ReviewPane";
-import { LITERATURE_FOCUS, type SourceNavigation } from "../../workbench-contract";
+import { LITERATURE_OVERVIEW, chooseIdea, literatureFocus, type SourceNavigation } from "../../workbench-contract";
 import { ACTIVE_IDEA } from "../WorkbenchEvents";
 import { useEffect, useRef, useState } from "react";
 import type { PaperHitDTO } from "../../../desktop/contracts";
@@ -384,10 +384,12 @@ export function SourcesPane({ initialMode }: { initialMode?: Mode }) {
   // Literature works on one pursued idea at a time: its ranks replace the
   // library-wide sections while it is the focus (see docs/RESEARCH-FLOW.md).
   const pursued: PursuedIdea[] = scope.stage === "literature" ? (view.pursued ?? []) : [];
-  const focus = pursued.find((p) => p.target === scope.drafts[LITERATURE_FOCUS]) ?? null;
+  const focus = literatureFocus(pursued, scope.drafts) ?? null;
+  /** Focus an idea (it becomes the window's current idea), or "" for all pursued ideas. */
   const setFocus = (target: string) => {
     setCollapsed(new Set());
-    scope.setDraft(LITERATURE_FOCUS, target);
+    if (target) chooseIdea(scope.setDraft, target);
+    else scope.setDraft(LITERATURE_OVERVIEW, "1");
   };
   const rated = (id: string) => rating[`${focus?.target ?? ""}|${id}`];
   /** A note's idea links with titles and current versions (for the reader). */

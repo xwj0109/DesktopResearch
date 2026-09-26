@@ -20,6 +20,8 @@ import { ideaBoardSchema, emptyIdeaBoard, type IdeaBoardState } from "../src/ide
 import { ideaImportanceSchema, importanceMapSchema, type Importance, type Section } from "../src/source-importance-contract.ts";
 import { noteLinksSchema, type NoteLink } from "../src/note-link-contract.ts";
 import { productionSchema, type ProductionCommit } from "../src/production-contract.ts";
+import { runLimitSchema, type RunLimit } from "../src/run-contract.ts";
+import { risksSchema, type Risk } from "../src/risk-contract.ts";
 export const hash = (b: Buffer | string) =>
   createHash("sha256").update(b).digest("hex");
 const idSchema = z.uuid();
@@ -167,6 +169,8 @@ const strategyDisk = z
     ideaImportance: ideaImportanceSchema.optional(),
     noteLinks: noteLinksSchema.optional(),
     production: productionSchema.optional(),
+    runLimit: runLimitSchema.optional(),
+    risks: risksSchema.optional(),
   })
   .strict();
 function validateDatabase(input: unknown): Database {
@@ -317,6 +321,10 @@ export class Store {
     if (token !== this.db.rootToken)
       throw new Fault(403, "Launcher capability required");
   }
+  /** Every strategy's id. */
+  ids() {
+    return Object.keys(this.db.strategies);
+  }
   get(id: string) {
     idSchema.parse(id);
     const s = this.db.strategies[id];
@@ -366,6 +374,22 @@ export class Store {
       s.production = productionSchema.parse({ current: commit, history: [...(prev?.current ? [prev.current] : []), ...(prev?.history ?? [])].slice(0, 50) });
       this.event(s, `Sent to production: ${commit.title} v${commit.version} (checkpoint ${commit.checkpoint.slice(0, 8)})`);
     }).production!;
+  }
+  /** Change one idea's risks (organisation, applied to the latest state; validated before saving). */
+  changeRisks(id: string, ideaId: string, fn: (risks: Risk[]) => Risk[]) {
+    return this.change(id, this.get(id).revision, (s) => {
+      const all = { ...(s.risks ?? {}) };
+      const next = fn(structuredClone(all[ideaId] ?? []));
+      if (next.length) all[ideaId] = next;
+      else delete all[ideaId];
+      s.risks = risksSchema.parse(all);
+    }).risks?.[ideaId] ?? [];
+  }
+  /** How much an agent may run without asking (settings, not a research record). */
+  setRunLimit(id: string, limit: RunLimit) {
+    return this.change(id, this.get(id).revision, (s) => {
+      s.runLimit = runLimitSchema.parse(limit);
+    }).runLimit!;
   }
   /** Link a note to a saved idea (the caller resolved the idea and its latest
    * version), change the stance, or remove the link (`null`). Like ranks this

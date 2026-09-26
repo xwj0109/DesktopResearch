@@ -23,6 +23,8 @@ export const viewContextSchema = z
     ideaTarget: z.string().regex(/^(d|r):[0-9a-f-]{36}$/).nullable().optional(),
     focusIdea: z.string().regex(/^r:[0-9a-f-]{36}$/).nullable().optional(),
     developIdea: z.string().regex(/^r:[0-9a-f-]{36}$/).nullable().optional(),
+    /** The stage the window shows (ideas, literature, research, data, …). */
+    stage: z.string().regex(/^[a-z]{1,12}$/).nullable().optional(),
   })
   .strict();
 const names: Record<string, ConversationTab> = {
@@ -81,6 +83,51 @@ export function nativeRoutes(
         });
       }
 
+      // Runs and the release candidate (reads are GETs: presentation, never journaled).
+      app.get(base + "/runs", async (req, res) => {
+        const { idea } = z.object({ idea: z.string().regex(/^r:[0-9a-f-]{36}$/) }).strict().parse(req.query);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "runs_list", { idea }));
+      });
+      app.get(base + "/runs/status", async (req, res) => {
+        const { run } = z.object({ run: z.uuid() }).strict().parse(req.query);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "run_status", { run }));
+      });
+      app.get(base + "/runs/log", async (req, res) => {
+        const { run, offset } = z.object({ run: z.uuid(), offset: z.coerce.number().int().min(0).optional() }).strict().parse(req.query);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "run_logs", { run, ...(offset !== undefined ? { offset } : {}) }));
+      });
+      app.get(base + "/runs/compare", async (req, res) => {
+        const { a, b } = z.object({ a: z.uuid(), b: z.uuid() }).strict().parse(req.query);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "run_compare", { a, b }));
+      });
+      app.get(base + "/runs/output", async (req, res) => {
+        const { run, path } = z.object({ run: z.uuid(), path: z.string().min(1).max(500) }).strict().parse(req.query);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "run_output", { run, path }));
+      });
+      app.get(base + "/idea-context", async (req, res) => {
+        const { idea } = z.object({ idea: z.string().regex(/^r:[0-9a-f-]{36}$/) }).strict().parse(req.query);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "idea_context", { idea }));
+      });
+      app.get(base + "/risks", async (req, res) => {
+        const { idea } = z.object({ idea: z.string().regex(/^r:[0-9a-f-]{36}$/) }).strict().parse(req.query);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "risk_list", { idea }));
+      });
+      for (const [route, tool] of [["risks/add", "risk_add"], ["risks/set", "risk_set"], ["risks/delete", "risk_delete"]] as const)
+        app.post(base + "/" + route, async (req, res) => {
+          res.json(await workbench.call(z.uuid().parse(req.params.id), tool, req.body));
+        });
+      app.get(base + "/candidate", async (req, res) => {
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "candidate_status", {}));
+      });
+      for (const [route, tool] of [["runs/submit", "run_submit"], ["runs/cancel", "run_cancel"], ["runs/limit", "run_limit_set"], ["candidate/validate", "candidate_validate"]] as const)
+        app.post(base + "/" + route, async (req, res) => {
+          res.json(await workbench.call(z.uuid().parse(req.params.id), tool, req.body));
+        });
+      // Save, decide and delete ideas: the registry operations agents use, with the same checks.
+      for (const [route, tool] of [["idea-save", "idea_save"], ["idea-decide", "idea_decide"], ["idea-delete", "idea_delete"]] as const)
+        app.post(base + "/" + route, async (req, res) => {
+          res.json(await workbench.call(z.uuid().parse(req.params.id), tool, req.body));
+        });
       // Idea board edits from the window (agents use the same Workbench).
       app.post(base + "/ideas", (req, res) => {
         const sid = z.uuid().parse(req.params.id);
@@ -187,7 +234,7 @@ export function nativeRoutes(
       app.get(base + "/view-context", (req, res) => {
         const sid = z.uuid().parse(req.params.id);
         store.get(sid);
-        const q = z.object({ active: z.string(), page: z.string(), idea: z.string(), open: z.string(), focus: z.string().optional(), develop: z.string().optional() }).strict().parse(req.query);
+        const q = z.object({ active: z.string(), page: z.string(), idea: z.string(), open: z.string(), focus: z.string().optional(), develop: z.string().optional(), stage: z.string().optional() }).strict().parse(req.query);
         workbench.view.setContext(
           sid,
           viewContextSchema.parse({
@@ -196,6 +243,7 @@ export function nativeRoutes(
             ideaTarget: q.idea || null,
             focusIdea: q.focus || null,
             developIdea: q.develop || null,
+            stage: q.stage || null,
             openArtifacts: q.open ? q.open.split(",") : [],
           }),
         );

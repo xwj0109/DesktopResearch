@@ -236,6 +236,8 @@ export const viewStateSchema = z
             ),
             outer: z.enum(["row", "column"]),
             inner: z.enum(["row", "column"]),
+            /** A second pane of the same tile shown below its current tab. */
+            below: z.partialRecord(z.enum(["a", "b", "c"]), z.string().regex(/^[a-z-]{1,24}$/)),
           })
           .partial()
           .strict(),

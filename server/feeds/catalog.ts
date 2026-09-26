@@ -56,7 +56,7 @@ export class FeedCatalog {
   list(sid: string, serviceRunning: boolean) {
     return this.defs(sid).map((def) => ({ def, status: this.status(sid, def, serviceRunning), partitions: this.partitions(sid, def.id, 1) }));
   }
-  create(sid: string, input: FeedCreate, workspaceFor: () => string | undefined) {
+  create(sid: string, input: FeedCreate, workspaceFor: () => string | undefined, checkpointOf: (workspace: string) => string | undefined = () => undefined) {
     let def: FeedDef;
     const common = { version: 1 as const, paused: false, createdAt: new Date().toISOString() };
     if (input.kind === "stream") {
@@ -81,7 +81,8 @@ export class FeedCatalog {
       if (!ws) throw new Error("No workspace given and nothing is in production.");
       if (!fs.existsSync(path.join(this.folderOf(sid), "Research-Workspaces", ws))) throw new Error("That idea has no Research Development workspace.");
       const title = input.title || `Script: ${input.command.slice(0, 60)}`;
-      def = { ...common, kind: "script", id: this.unique(sid, title), title, command: input.command, workspace: ws, every: input.every, timeColumn: input.timeColumn, backfillFrom: input.backfillFrom };
+      const checkpoint = checkpointOf(ws);
+      def = { ...common, kind: "script", id: this.unique(sid, title), title, command: input.command, workspace: ws, ...(checkpoint ? { checkpoint } : {}), every: input.every, timeColumn: input.timeColumn, backfillFrom: input.backfillFrom };
     }
     return this.write(sid, def);
   }

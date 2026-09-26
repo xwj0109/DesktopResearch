@@ -435,6 +435,34 @@ button.bar-item:hover {
   width: 232px;
   flex-shrink: 0;
 }
+/* Up to 1440px wide the rail keeps to stage numbers (names on hover), so the
+ * work and Pi get the width. */
+@media (max-width: 1440px) {
+  .tile.rail {
+    width: 52px;
+  }
+  .tile.rail > .tile-label,
+  .tile.rail .rail-ident > div,
+  .tile.rail .section-title,
+  .tile.rail .row .label,
+  .tile.rail .row.sub,
+  .tile.rail .rail-note,
+  .tile.rail .rail-ideas {
+    display: none;
+  }
+  .tile.rail .rail-ident {
+    justify-content: center;
+  }
+  .tile.rail .row {
+    justify-content: center;
+    position: relative;
+  }
+  .tile.rail .row .mark {
+    position: absolute;
+    right: 4px;
+    top: 2px;
+  }
+}
 .tile.main {
   flex: 1;
 }
@@ -2207,6 +2235,28 @@ button.list-row:hover {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+/* A second pane below the current tab (⊟): the tile splits in half. */
+.tile.split > .below-head {
+  order: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+}
+.tile.split > .below-head select {
+  font: inherit;
+  color: var(--text-dim);
+  background: transparent;
+  border: 0;
+}
+.tile.split > .slot-body.below {
+  order: 3;
+}
+.tabs .icon-btn.on {
+  color: var(--accent);
 }
 .slot-body > .pane-inner,
 .slot-body > .empty {
@@ -4318,6 +4368,16 @@ label.list-row.check {
   min-width: 0;
   flex-shrink: 1;
 }
+/* Text handed to Pi before its terminal was ready: visible until pasted or discarded. */
+.pi-waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--yellow);
+  white-space: nowrap;
+}
 .pi-bar .spacer {
   flex: 1;
   min-width: 4px;
@@ -4462,6 +4522,49 @@ label.list-row.check {
   font-size: 11px;
   white-space: nowrap;
 }
+/* Where the developing idea stands: literature, changes, newest document. Each item is a link. */
+.idea-status {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+}
+.idea-status .is-item {
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: none;
+  border: 0;
+  padding: 3px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 32ch;
+  cursor: pointer;
+}
+.idea-status .is-item + .is-item::before {
+  content: "·";
+  margin-right: 8px;
+  color: var(--line);
+}
+.idea-status .is-item:hover,
+.idea-status .is-item:focus-visible {
+  color: var(--text);
+}
+.idea-status .is-item.warn {
+  color: var(--yellow);
+}
+.idea-status .is-item.new {
+  color: var(--accent);
+}
+.tabs [role="tab"] .tab-badge {
+  margin-left: 5px;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--bg);
+  background: var(--accent);
+}
 .rd-none,
 .rd-empty {
   color: var(--text-dim);
@@ -4544,6 +4647,162 @@ label.list-row.check {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+}
+/* Runs (Develop) and the release candidate (Release). */
+.tag.err {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 55%, transparent);
+}
+.runs-start {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.runs-command {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+}
+.runs-command input {
+  flex: 1;
+  min-width: 0;
+}
+.runs-command input[type="number"],
+.runs-limit input[type="number"] {
+  flex: 0 0 6ch;
+  width: 6ch;
+}
+.run-row {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--line);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+}
+.run-row:hover {
+  background: var(--fill-2);
+}
+.run-row.on,
+.run-row.cmp {
+  background: var(--fill-sel);
+  border-left-color: var(--accent);
+}
+.run-row .t {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.run-row .m {
+  display: block;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.st-running .g,
+.st-running {
+  color: var(--accent);
+}
+.st-succeeded .g {
+  color: var(--green);
+}
+.st-failed .g,
+.path.st-failed {
+  color: var(--red);
+}
+.st-lost .g,
+.path.st-lost {
+  color: var(--yellow);
+}
+.st-cancelled .g,
+.st-queued .g {
+  color: var(--text-dim);
+}
+.runs-limit {
+  margin-top: auto;
+  padding: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  border-top: 1px solid var(--line);
+}
+.run-body {
+  padding: 10px 12px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.run-body .warn {
+  color: var(--yellow);
+}
+.run-outputs {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line);
+}
+.run-body > .rd-viewer {
+  min-height: 240px;
+  border: 1px solid var(--line);
+}
+.run-log {
+  margin: 0;
+  padding: 8px;
+  max-height: 40vh;
+  overflow: auto;
+  font-size: 11px;
+  white-space: pre-wrap;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+td.up {
+  color: var(--green);
+}
+td.down {
+  color: var(--red);
+}
+.candidate-pane > nav > .btn,
+.candidate-pane > .btn {
+  margin: 6px 10px;
+  align-self: flex-start;
+}
+.candidate-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px;
+}
+.candidate-checks {
+  list-style: none;
+  margin: 0;
+  padding: 0 10px;
+  font-size: 11.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.candidate-checks .warn {
+  color: var(--yellow);
+}
+.prod-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
 }
 .rd-viewer-head {
   display: flex;
@@ -5464,4 +5723,166 @@ label.list-row.check {
 }
 .feed-outages td {
   white-space: nowrap;
+}
+.candidate-pane .section-title {
+  padding: 8px 10px 4px;
+}
+
+/* Risks (idea editor, strip, candidate). */
+.idea-status .is-item.err {
+  color: var(--red);
+}
+.risks .risk-list {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.risk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.risk .g {
+  width: 1.5ch;
+  text-align: center;
+  color: var(--text-dim);
+}
+.risk.st-failed .g {
+  color: var(--red);
+}
+.risk.st-measured-ok .g {
+  color: var(--green);
+}
+.risk.st-unknown .g,
+.risk.st-estimated .g {
+  color: var(--yellow);
+}
+.risk .t {
+  flex: 1;
+  min-width: 0;
+}
+.risk .tag {
+  margin-left: 4px;
+}
+.risk-waive,
+.risk-add {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+}
+.risk-waive input,
+.risk-add input {
+  flex: 1;
+  min-width: 0;
+}
+.run-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+button.link {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+/* What the AI sees (idea_context), under the Develop bar. */
+.idea-context {
+  margin: 6px var(--gap) 0;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 12px;
+  max-height: 45vh;
+  overflow: auto;
+}
+.idea-context-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.idea-context-head .spacer {
+  flex: 1;
+}
+.idea-context-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 4px 18px;
+  padding: 8px 10px;
+}
+.idea-context-body h4 {
+  margin: 4px 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: lowercase;
+}
+.idea-context-body p,
+.idea-context-body ul,
+.idea-context-body ol {
+  margin: 2px 0;
+}
+.idea-context-body ul {
+  list-style: none;
+  padding: 0;
+}
+.idea-context-body ol {
+  padding-left: 18px;
+}
+
+/* Features and run resources (Develop). */
+.features-pane {
+  padding: 10px 12px;
+  overflow: auto;
+  font-size: 12px;
+}
+.features-pane td.warn {
+  color: var(--yellow);
+}
+tr.clickable {
+  cursor: pointer;
+}
+tr.clickable:hover {
+  background: var(--fill-2);
+}
+.bar-cell {
+  position: relative;
+  display: inline-block;
+  min-width: 90px;
+}
+.bar-cell .bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  z-index: 0;
+}
+.bar-cell .v {
+  position: relative;
+}
+/* The idea strip takes its own line under the idea tabs, so nothing is cut short. */
+.rd-bar {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+.rd-bar > .idea-status {
+  order: 10;
+  flex-basis: 100%;
+  margin: 0 -6px 4px;
+}
+.idea-status .is-item {
+  max-width: 48ch;
+}
+.idea-context .risk {
+  display: block;
 }

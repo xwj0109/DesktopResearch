@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { Terminal } from "@xterm/xterm";
 import type { DesktopBridge } from "../../desktop/contracts";
@@ -35,6 +35,25 @@ export const pasteIntoTerminal = (stage: string, text: string) => {
   target(text);
   return true;
 };
+/** Text handed to Pi while its terminal isn't ready: kept, visibly, in the Pi
+ * bar until the user pastes or discards it; never dropped into a hidden draft. */
+const waiting = new Map<string, string[]>();
+const waitingSubs = new Set<() => void>();
+const setWaiting = (stage: string, items: string[]) => {
+  if (items.length) waiting.set(stage, items);
+  else waiting.delete(stage);
+  for (const s of waitingSubs) s();
+};
+export function handToPi(stage: string, text: string) {
+  if (pasteIntoTerminal(stage, text)) return "pasted" as const;
+  setWaiting(stage, [...(waiting.get(stage) ?? []), text]);
+  return "waiting" as const;
+}
+const useWaiting = (stage: string) =>
+  useSyncExternalStore(
+    (cb) => (waitingSubs.add(cb), () => void waitingSubs.delete(cb)),
+    () => waiting.get(stage),
+  );
 
 function xtermTheme(id: ThemeId) {
   const t = themes[id];
@@ -264,6 +283,7 @@ export function PiTerminal({
   };
   const folder = cwd.replace(/^\/Users\/[^/]+/, "~");
 
+  const pendingForPi = useWaiting(stage);
   if (!bridge.terminalOpen)
     return <p className="notice error">This window has no terminal bridge; update the desktop app.</p>;
   return (
@@ -280,6 +300,25 @@ export function PiTerminal({
             {summary.thinking ? ` · ${summary.thinking}` : ""}
           </span>
         )}
+        {pendingForPi?.length ? (
+          <span className="pi-waiting" role="status">
+            {pendingForPi.length === 1 ? "1 item" : `${pendingForPi.length} items`} waiting for Pi
+            <button
+              className="idea-toggle"
+              title="Paste into Pi's input. Nothing is sent until you press Enter there."
+              onClick={() => {
+                const items = pendingForPi;
+                setWaiting(stage, []);
+                for (const text of items) if (!pasteIntoTerminal(stage, text)) return setWaiting(stage, items);
+              }}
+            >
+              Paste now
+            </button>
+            <button className="idea-toggle" onClick={() => setWaiting(stage, [])}>
+              Discard
+            </button>
+          </span>
+        ) : null}
         <span className="spacer" />
         <button className={`idea-toggle ${view === "reader" ? "on" : ""}`} aria-label="Reading view" aria-pressed={view === "reader"} title="Reading view: formatted conversation (maths, tables, tool results). Typing returns to Pi." onClick={() => setView((v) => (v === "reader" ? "terminal" : "reader"))}>
           ≡ Read

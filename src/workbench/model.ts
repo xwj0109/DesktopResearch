@@ -11,6 +11,8 @@ export interface Stage {
   id: StageId;
   label: string;
   icon: string;
+  /** The earlier record system's stages, hidden unless the window shows them. */
+  legacy?: boolean;
 }
 export interface Thread {
   title: string;

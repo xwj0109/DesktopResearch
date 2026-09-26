@@ -234,6 +234,27 @@ export class RdWorkspaces {
       return (await this.log(dir, 1))[0];
     });
   }
+  /** Keep a checkpoint reachable whatever later happens in the workspace
+   * (reset, amend, rebase): a tag such as candidate/2 pointing at it. */
+  tag(dir: string, name: string, sha: string) {
+    if (!/^candidate\/\d{1,6}$/.test(name) || !/^[0-9a-f]{40}$/.test(sha)) throw new Error("Invalid tag");
+    return this.serial(dir, async () => {
+      const existing = (await this.git(dir, ["tag", "-l", name])).trim();
+      if (!existing) return void (await this.git(dir, ["tag", name, sha]));
+      const at = (await this.git(dir, ["rev-parse", `${name}^{commit}`])).trim();
+      if (at !== sha) throw new Error(`Tag ${name} already names another checkpoint.`);
+    });
+  }
+  /** One file's text as it is in a checkpoint (null when it isn't there). */
+  fileAt(dir: string, sha: string, rel: string) {
+    if (!/^[0-9a-f]{7,40}$/.test(sha) || !/^[A-Za-z0-9_./-]{1,200}$/.test(rel) || rel.split("/").includes("..")) throw new Error("Invalid path");
+    return this.serial(dir, () => this.git(dir, ["show", `${sha}:${rel}`], MAX_TEXT).catch(() => null));
+  }
+  /** The full id of a checkpoint in this workspace, or null if there is none such. */
+  commit(dir: string, rev: string) {
+    if (!/^([0-9a-f]{7,40}|HEAD|candidate\/\d{1,6})$/.test(rev)) throw new Error("Invalid checkpoint id");
+    return this.serial(dir, () => this.git(dir, ["rev-parse", "--verify", "--quiet", `${rev}^{commit}`]).then((s) => s.trim() || null, () => null));
+  }
   history(dir: string, limit = 50) {
     return this.serial(dir, () => this.log(dir, limit));
   }
@@ -265,4 +286,33 @@ export class RdWorkspaces {
       return { sha, files: files.sort((a, b) => a.path.localeCompare(b.path)), ...totals(files) };
     });
   }
+}
+
+/** A clean copy of one checkpoint in `dest` (git archive, nothing of the live
+ * working tree), with data/ linked to the strategy's snapshots as in the
+ * workspace. Reused when `dest` already holds that checkpoint. Production runs
+ * from here, so editing the research workspace cannot change what runs. */
+export async function materialise(workspace: string, sha: string, dest: string, snapshots: string) {
+  if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("Invalid checkpoint id");
+  const marker = path.join(dest, ".pi-research-checkpoint");
+  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8").trim() === sha) return dest;
+  const tmp = `${dest}.tmp-${process.pid}`;
+  fs.rmSync(tmp, { recursive: true, force: true });
+  fs.mkdirSync(tmp, { recursive: true, mode: 0o700 });
+  const git = spawn("git", [...GIT_FLAGS, "archive", "--format=tar", sha], { cwd: workspace, env: gitEnv(workspace) });
+  const tar = spawn("tar", ["-x", "-f", "-", "-C", tmp], { env: { PATH: process.env.PATH ?? "/usr/bin:/bin" } });
+  let err = "";
+  git.stderr.on("data", (d) => (err += d));
+  git.stdout.pipe(tar.stdin);
+  const exit = (p: typeof git) => new Promise<number>((resolve) => (p.on("error", () => resolve(-1)), p.on("close", (c) => resolve(c ?? -1))));
+  const [g, t] = await Promise.all([exit(git), exit(tar)]);
+  if (g !== 0 || t !== 0) {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    throw new Error(g !== 0 ? `Checkpoint ${sha.slice(0, 7)} could not be read: ${err.trim().slice(0, 200)}` : "Checkpoint files could not be extracted");
+  }
+  fs.symlinkSync(snapshots, path.join(tmp, "data"));
+  fs.writeFileSync(path.join(tmp, ".pi-research-checkpoint"), sha + "\n");
+  fs.rmSync(dest, { recursive: true, force: true });
+  fs.renameSync(tmp, dest);
+  return dest;
 }

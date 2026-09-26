@@ -268,3 +268,21 @@ test("deleting a snapshot removes its file or daily folder and manifest for good
   assert.throws(() => data.delete("s", "../x"), /Invalid snapshot name/);
   assert.throws(() => data.delete("s", "nope"), /not found/);
 });
+
+test("other JSON in the snapshots folder (e.g. old dataset projections) is skipped, not listed or deletable", async (t) => {
+  const root = tmp(t);
+  const data = new DataFeeds(() => root, () => ({ fetch: globalThis.fetch, lookup: publicDns }), 0);
+  const rd = new RdWorkspaces(() => root);
+  const dir = await rd.ensure("s", "11111111-1111-4111-8111-111111111111", "Kelly");
+  fs.writeFileSync(path.join(dir, "px.csv"), "date,close\n2024-01-02,1\n");
+  const one = await data.register("s", rd.resolve(dir, "px.csv"), "px.csv", "Prices");
+  const snaps = path.join(root, "Data", "snapshots");
+  // What projections wrote here before: a dataset record, no manifest fields.
+  const legacy = "22222222-2222-4222-8222-222222222222";
+  fs.writeFileSync(path.join(snaps, `${legacy}.json`), JSON.stringify({ id: legacy, contract: {}, rows: 3 }));
+  fs.writeFileSync(path.join(snaps, "broken.json"), "{not json");
+  assert.deepEqual(data.snapshots("s").map((s) => s.name), [one.name]);
+  assert.throws(() => data.snapshot("s", legacy), /not found/);
+  assert.throws(() => data.delete("s", legacy), /not found/);
+  assert.ok(fs.existsSync(path.join(snaps, `${legacy}.json`)), "left in place");
+});

@@ -212,7 +212,7 @@ const refusalSchema = z.discriminatedUnion("code", [
   z.object({ code: z.literal("full") }).strict(),
 ]);
 export function sourceRefusal(raw: Uint8Array, route: string) {
-  if (!/\/(artifacts\/[0-9a-f-]{36}\/(delete|restore)|annotations(\/[0-9a-f-]{36}\/delete)?|science\/commands|native\/reviews\/review_delete)$/.test(route))
+  if (!/\/(artifacts\/[0-9a-f-]{36}\/(delete|restore)|annotations(\/[0-9a-f-]{36}\/delete)?|science\/commands|native\/reviews\/review_delete|native\/idea-delete)$/.test(route))
     return undefined;
   try {
     const parsed = refusalSchema.safeParse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw)).refusal);
@@ -248,6 +248,7 @@ export function researchDTO(value: any, route: string): unknown {
   if (/\/native\/reviews\/review_delete$/.test(route)) return pick(value, ["deleted", "revision", "persistence"]);
   if (/\/native\/reviews\/review_create_idea$/.test(route)) return pick(value, ["target", "review"]);
   if (/\/native\/ideas$/.test(route)) return pick(value, ["ideas"]);
+  if (/\/native\/idea-(save|decide|delete)$/.test(route)) return pick(value, ["saved", "version", "decided", "onVersion", "deleted"]);
   if (/\/native\/source-importance$/.test(route)) return pick(value, ["artifactId", "importance"]);
   if (/\/native\/note-links$/.test(route)) return pick(value, ["noteId", "idea", "stance", "onVersion", "removed"]);
   if (/\/native\/idea-note$/.test(route)) return pick(value, ["idea", "added", "evidence", "shown"]);
@@ -257,8 +258,21 @@ export function researchDTO(value: any, route: string): unknown {
   if (/\/native\/feeds\/(create|update)$/.test(route)) return value;
   if (/\/native\/feeds\/delete$/.test(route)) return pick(value, ["deleted", "keptData", "bytes"]);
   if (/\/native\/feeds\/service$/.test(route)) return pick(value, ["mode", "enabled", "running", "heartbeatAt", "pid", "feeds", "label", "log"]);
-  if (/\/native\/production\/preview\?/.test(route)) return pick(value, ["idea", "title", "version", "pursued", "checkpoint", "pending", "snapshots", "current"]);
-  if (/\/native\/production\/commit$/.test(route)) return pick(value, ["idea", "title", "version", "hash", "checkpoint", "checkpointMessage", "snapshots", "note", "committedAt"]);
+  if (/\/native\/production\/preview\?/.test(route)) return pick(value, ["idea", "title", "version", "pursued", "checkpoint", "pending", "snapshots", "current", "entries", "defaultEntry", "risks", "failedRisks"]);
+  if (/\/native\/production\/commit$/.test(route)) return pick(value, ["idea", "title", "version", "hash", "checkpoint", "checkpointMessage", "snapshots", "note", "committedAt", "number", "entry", "risks", "acceptedFailedRisks"]);
+  // Runs: records the backend wrote from what executed (no credentials or paths beyond the run's own).
+  if (/\/native\/runs\?idea=/.test(route)) return pick(value, ["idea", "entries", "manifestError", "features", "runs", "batches", "limit", "agentUsage"]);
+  if (/\/native\/runs\/(status\?|submit$|cancel$)/.test(route)) return value;
+  if (/\/native\/runs\/log\?/.test(route)) return pick(value, ["text", "offset", "next", "size"]);
+  if (/\/native\/runs\/compare\?/.test(route)) return pick(value, ["a", "b", "differences", "warnings", "metrics", "usage"]);
+  if (/\/native\/runs\/output\?/.test(route)) return pick(value, ["path", "kind", "bytes", "mime", "base64", "text", "truncated", "tooLarge"]);
+  if (/\/native\/runs\/limit$/.test(route)) return pick(value, ["runs", "minutes"]);
+  if (/\/native\/idea-context\?idea=/.test(route)) return pick(value, ["idea", "window", "risks", "literature", "workspace", "runs", "candidate", "agentRuns", "next"]);
+  if (/\/native\/risks\?idea=/.test(route)) return pick(value, ["idea", "risks", "counts"]);
+  if (/\/native\/risks\/(add|set)$/.test(route)) return pick(value, ["idea", "risk"]);
+  if (/\/native\/risks\/delete$/.test(route)) return pick(value, ["deleted"]);
+  if (/\/native\/candidate$/.test(route)) return pick(value, ["current", "checks", "state", "validationRuns", "earlier"]);
+  if (/\/native\/candidate\/validate$/.test(route)) return value;
   if (/\/native\/rd\/files\?/.test(route)) return pick(value, ["idea", "files"]);
   if (/\/native\/data\/snapshots$/.test(route)) return pick(value, ["folder", "snapshots"]);
   if (/\/native\/data\/jobs$/.test(route)) return pick(value, ["jobs"]);
@@ -268,7 +282,7 @@ export function researchDTO(value: any, route: string): unknown {
   if (/\/native\/data\/cancel$/.test(route)) return pick(value, ["job", "status"]);
   if (/\/native\/data\/delete$/.test(route)) return pick(value, ["deleted", "bytes", "references"]);
   if (/\/native\/data\/(preview\?|register$)/.test(route))
-    return pick(value, ["version", "name", "title", "file", "format", "source", "query", "createdAt", "rows", "columns", "types", "first", "last", "bytes", "sha256", "parts", "missing", "preview", "references"]);
+    return pick(value, ["version", "name", "title", "file", "format", "source", "query", "createdAt", "rows", "columns", "types", "first", "last", "bytes", "sha256", "parts", "missing", "preview", "references", "retainedBy"]);
   if (/\/native\/rd\/file\?/.test(route)) return pick(value, ["path", "kind", "bytes", "mime", "base64", "text", "truncated", "tooLarge"]);
   if (/\/native\/rd\/changes\?/.test(route)) return pick(value, ["files", "added", "removed"]);
   if (/\/native\/rd\/history\?/.test(route)) return pick(value, ["checkpoints", "sha", "files", "added", "removed"]);

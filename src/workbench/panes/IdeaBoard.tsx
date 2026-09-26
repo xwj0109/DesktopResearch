@@ -6,7 +6,8 @@ import { initialValue, pruneBlankItems } from "../ResearchForm";
 import { PaneLoading, useAction, useResearch } from "../research";
 import { ideaStatus, type IdeaBoardOp } from "../../idea-board-contract";
 import { ACTIVE_IDEA } from "../WorkbenchEvents";
-import { LITERATURE_FOCUS } from "../../workbench-contract";
+import { chooseIdea } from "../../workbench-contract";
+import { RisksPanel } from "./Risks";
 
 /** Idea board: brainstorm drafts and saved ideas grouped by status.
  *
@@ -161,7 +162,11 @@ export function IdeaBoard() {
   const scope = useResearch();
   const action = useAction();
   const open = scope.drafts[ACTIVE_IDEA] || null;
-  const setOpen = (key: string | null) => scope.setDraft(ACTIVE_IDEA, key ?? "");
+  const setOpen = (key: string | null) => {
+    scope.setDraft(ACTIVE_IDEA, key ?? "");
+    // Opening a pursued idea makes it the window's current idea, for Literature and Research Development too.
+    if (key && (scope.view?.pursued ?? []).some((p: { target: string }) => p.target === key)) chooseIdea(scope.setDraft, key);
+  };
   const [filter, setFilter] = useState("");
   const [loaded, setLoaded] = useState<Record<string, IdeaContent>>({});
   const [undo, setUndo] = useState<{ text: string; restore: () => void } | null>(null);
@@ -302,7 +307,7 @@ export function IdeaBoard() {
   /** Pursued ideas continue in Literature: focus it there and go (step 5). */
   const workOnInLiterature = (card: Card) => {
     if (!card.recordId) return;
-    scope.setDraft(LITERATURE_FOCUS, `r:${card.recordId}`);
+    chooseIdea(scope.setDraft, `r:${card.recordId}`);
     scope.goToStage?.("literature", "sources");
   };
   /* ── mutations ───────────────────────────────────────────────────── */
@@ -384,7 +389,7 @@ export function IdeaBoard() {
       .run(
         async () => {
           try {
-            await action.sendCommand({ type: "idea.delete", id });
+            await scope.client.write("/native/idea-delete", { target: "r:" + id });
           } catch (e: any) {
             throw new Error(
               e?.refusal?.code === "cited"
@@ -392,13 +397,12 @@ export function IdeaBoard() {
                 : (e?.message ?? String(e)),
             );
           }
+          // The backend already dropped it from the board; mirror that locally.
           local((b) => {
             const edits = { ...b.edits };
             delete edits[id];
             return { ...b, edits, archived: b.archived.filter((x) => x !== id) };
           });
-          await send({ op: "discard", recordId: id });
-          await send({ op: "unarchive", recordId: id });
         },
         () => `Deleted “${title}” permanently.`,
       )
@@ -413,15 +417,21 @@ export function IdeaBoard() {
     let recordId = card.recordId;
     const ok = await action.run(
       async () => {
-        const input = versionInput.parse({ kind: "idea", content });
-        const before = new Set(versions.map((v) => v.id));
-        await action.sendCommand({ type: "version.create", value: input, ...(recordId ? { id: recordId } : {}) });
-        if (card.draft) {
-          const latest: any = await scope.client.read("/native/research");
-          recordId = (latest?.science?.state?.versions ?? []).find((v: any) => v.kind === "idea" && !before.has(v.id))?.id;
-          local((b) => ({ ...b, cards: b.cards.filter((x) => x.key !== card.draft!.key) }));
-          await send({ op: "delete", key: card.draft!.key });
-        } else discardEdits(card);
+        // Checked here too, for readable field messages; the backend applies the same rule.
+        versionInput.parse({ kind: "idea", content });
+        const r: any = await scope.client.write("/native/idea-save", { target: card.draft ? `d:${card.draft.key}` : `r:${recordId}` });
+        recordId = String(r.saved).slice(2);
+        typing.current.delete(card.key);
+        // The backend removed the draft or the pending edits; mirror that locally.
+        local((b) =>
+          card.draft
+            ? { ...b, cards: b.cards.filter((x) => x.key !== card.draft!.key) }
+            : (() => {
+                const edits = { ...b.edits };
+                delete edits[recordId!];
+                return { ...b, edits };
+              })(),
+        );
       },
       () => `Saved “${content.title}” as a new immutable version.`,
     );
@@ -433,9 +443,9 @@ export function IdeaBoard() {
     if (!card.latest) return false;
     const ok = await action.run(
       () =>
-        action.sendCommand({
-          type: "idea.decide",
-          target: { id: card.latest!.id, hash: card.latest!.hash },
+        scope.client.write("/native/idea-decide", {
+          target: "r:" + card.latest!.id,
+          expectedHash: card.latest!.hash,
           decision,
           reason: why.trim(),
         }),
@@ -471,7 +481,7 @@ export function IdeaBoard() {
   const askPi = (card: Card) => {
     if (!card.content) return;
     scope.appendComposer(`${ideaMarkdown(card.content, label)}\n\nCritique and sharpen this strategy idea.`);
-    action.setStatus("Idea added to the Pi composer. Nothing is sent until you press Send.");
+    action.setStatus("Idea added to Pi’s input. Nothing is sent until you send it there.");
   };
 
   const current = open ? cards.find((c) => c.key === open) : undefined;
@@ -1085,6 +1095,7 @@ function IdeaEditor({
           )}
         </p>
       )}
+      {card.recordId && <RisksPanel idea={`r:${card.recordId}`} />}
       {versions.length > 0 && (
         <details className="fold">
           <summary>History · {versions.length} version{versions.length > 1 ? "s" : ""}</summary>

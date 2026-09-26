@@ -47,6 +47,10 @@ export interface FetchRequest {
   end: string; // YYYY-MM-DD (UTC, inclusive)
   title?: string;
 }
+/** A snapshot manifest, as opposed to other JSON in the folder (e.g. dataset
+ * projections written there by older versions). */
+const isManifest = (m: any, file: string): m is SnapshotManifest =>
+  typeof m?.name === "string" && typeof m.file === "string" && typeof m.createdAt === "string" && file === `${m.name}.json`;
 export interface SnapshotManifest {
   version: 1;
   name: string;
@@ -194,6 +198,8 @@ export class DataFeeds {
       .flatMap((f) => {
         try {
           const m = JSON.parse(fs.readFileSync(path.join(d, f), "utf8")) as SnapshotManifest;
+          // Only snapshot manifests; other JSON here (e.g. dataset projections written by older versions) is skipped.
+          if (!isManifest(m, f)) return [];
           const { preview: _, parts, ...rest } = m;
           return [{ ...rest, ...(parts ? { files: parts.length } : {}) } as SnapshotManifest];
         } catch {
@@ -205,8 +211,9 @@ export class DataFeeds {
   snapshot(sid: string, name: string): SnapshotManifest {
     if (!/^[a-z0-9-]{1,120}$/.test(name)) throw new Error("Invalid snapshot name");
     const f = path.join(this.dir(sid), `${name}.json`);
-    if (!fs.existsSync(f)) throw new Error(`Snapshot ${name} not found. Use data_snapshots for names.`);
-    return JSON.parse(fs.readFileSync(f, "utf8"));
+    const m = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : undefined;
+    if (!isManifest(m, `${name}.json`)) throw new Error(`Snapshot ${name} not found. Use data_snapshots for names.`);
+    return m;
   }
   /** Code in the strategy's idea workspaces that mentions a snapshot's file
    * (what would stop working if it were deleted). Text files up to 1 MiB. */

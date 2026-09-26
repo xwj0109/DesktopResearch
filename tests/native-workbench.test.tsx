@@ -65,7 +65,8 @@ test("actual native strategy keeps three-pane composition without synthetic conv
   const stages = stageNav
     .findAllByType("button")
     .filter((b) => typeof b.props["data-stage"] === "string");
-  assert.equal(stages.length, 7);
+  // Ideas → Explore → Develop → Release; the legacy stages are hidden unless shown from the palette.
+  assert.deepEqual(stages.map((b) => b.props["data-stage"]), ["ideas", "literature", "research", "data"]);
   await act(() => stages[0].props.onClick());
   assert.equal(root.findByType("textarea").props.value, "");
   await act(() =>
@@ -88,20 +89,19 @@ test("actual native strategy keeps three-pane composition without synthetic conv
     true,
   );
   assert.equal(saved.theme, undefined, "theme is app-wide, not per window");
-  // Layouts persist per stage in the saved view; Design & Code is three panes.
+  // Layouts persist per stage in the saved view.
   const columns = () => root.findByProps({ "aria-label": "Resize columns" });
   await act(() => columns().props.onKeyDown({ key: "ArrowLeft", preventDefault() {} }));
   assert.equal(saved.layouts?.ideas?.split, 0.44);
-  await act(() => stages[4].props.onClick());
+  // Develop: the idea's Pi and its runs.
+  await act(() => stages[2].props.onClick());
   const panes = root
     .findAll((n) => n.type === "section" && n.props["data-slot"])
     .map((n) => [n.props["data-slot"], n.props["aria-label"], n.props.hidden]);
   assert.deepEqual(panes, [
     ["a", "Pi", false],
-    ["b", "Graph", false],
-    ["c", "Code", false],
+    ["c", "Runs", false],
   ]);
-  assert.ok(JSON.stringify(rendered!.toJSON()).includes("No graph loaded"));
 });
 test("actual portfolio cannot navigate into strategy stages or display fixture evidence", async (t) => {
   let rendered: ReturnType<typeof create>;

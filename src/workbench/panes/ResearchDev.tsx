@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LITERATURE_FOCUS, RESEARCH_IDEA } from "../../workbench-contract";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { chooseIdea, chosenIdea } from "../../workbench-contract";
 import { PdfViewer } from "../PdfViewer";
 import { Prose } from "../Prose";
 import { useResearch } from "../research";
+import { PaneVisible, usePoll } from "../usePoll";
+import { setBadge } from "../badges";
+import type { IdeaCoverage } from "../../idea-coverage";
+import { riskSummary, useRisks } from "./Risks";
+import { IdeaContextPanel } from "./IdeaContext";
 import { formatTime } from "../transcript";
 import { CodeView } from "./CodePane";
 import { SendToProduction } from "./Production";
@@ -19,8 +24,13 @@ export interface DevIdea {
   pursuedOnVersion: number | null;
   reason: string;
   pendingEdits: boolean;
+  coverage?: IdeaCoverage;
 }
-interface RdFile {
+/** Window drafts per idea: the document shown in Documents, and the newest one the user has seen. */
+const docKey = (idea: string) => `research:doc:${idea}`;
+const seenKey = (idea: string) => `research:seen:${idea}`;
+const newestDocs = (files?: RdFile[]) => (files ?? []).filter((f) => f.document && f.path !== "README.md").sort((a, b) => b.modified.localeCompare(a.modified));
+export interface RdFile {
   path: string;
   bytes: number;
   modified: string;
@@ -28,43 +38,20 @@ interface RdFile {
   document: boolean;
 }
 
-/** The idea being developed: the window's choice, else Literature's focus, else the first pursued idea. */
+/** The idea being developed: the window's current idea, else the first pursued idea. */
 export function developingIdea(view: any, drafts: Record<string, string>): DevIdea | null {
   const pursued: DevIdea[] = view?.pursued ?? [];
-  const pick = (t?: string) => (t ? pursued.find((p) => p.target === t) : undefined);
-  return pick(drafts[RESEARCH_IDEA]) ?? pick(drafts[LITERATURE_FOCUS]) ?? pursued[0] ?? null;
+  return chosenIdea(pursued, drafts) ?? pursued[0] ?? null;
 }
 
 const errorText = (e: unknown) => String(e instanceof Error ? e.message : e).replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
 const size = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KiB` : `${(n / 1024 / 1024).toFixed(1)} MiB`);
 
-/** Read a GET route now and every `ms` while mounted (the workspace changes as Pi works). */
-function usePoll<T>(path: string | null, ms: number) {
-  const scope = useResearch();
-  const [state, setState] = useState<{ path: string | null; data?: T; error?: string }>({ path });
-  const seq = useRef(0);
-  const load = useCallback(() => {
-    if (!path) return;
-    const n = ++seq.current;
-    scope.client.read<T>(path).then(
-      (data) => n === seq.current && setState({ path, data }),
-      (e) => n === seq.current && setState((s) => ({ ...s, path, error: errorText(e) })),
-    );
-  }, [path, scope.client]);
-  useEffect(() => {
-    setState({ path });
-    load();
-    if (!path) return;
-    const timer = setInterval(load, ms);
-    return () => clearInterval(timer);
-  }, [path, ms, load]);
-  return { ...(state.path === path ? state : {}), reload: load };
-}
-
 /** Which idea Research Development is working on, stated clearly for the whole stage. */
 export function ResearchIdeaBar() {
   const scope = useResearch();
   const [sending, setSending] = useState(false);
+  const [seeing, setSeeing] = useState(false);
   if (!scope.view || scope.portfolio) return null;
   const pursued: DevIdea[] = scope.view.pursued ?? [];
   const dev = developingIdea(scope.view, scope.drafts);
@@ -82,7 +69,7 @@ export function ResearchIdeaBar() {
               aria-selected={dev?.target === p.target}
               className={dev?.target === p.target ? "on" : ""}
               title={`${p.title || "Untitled idea"} · v${p.version}. Each idea has its own workspace and Pi conversation.`}
-              onClick={() => scope.setDraft(RESEARCH_IDEA, p.target)}
+              onClick={() => chooseIdea(scope.setDraft, p.target)}
             >
               {p.title || "Untitled idea"}
             </button>
@@ -98,19 +85,91 @@ export function ResearchIdeaBar() {
           {dev.pendingEdits ? " · unsaved edits in Ideas" : ""}
         </span>
       )}
+      {dev && <IdeaStatus dev={dev} />}
       {dev && inProduction?.idea === dev.target && (
         <span className="tag ok" title={`Checkpoint ${inProduction.checkpoint.slice(0, 8)} · ${inProduction.checkpointMessage}`}>
-          in production · v{inProduction.version}
+          candidate · v{inProduction.version}
         </span>
       )}
       {dev && (
+        <button className={`btn small ${seeing ? "primary" : "ghost"}`} title="The summary Pi reads for this idea (idea_context)" onClick={() => setSeeing((s) => !s)}>
+          What the AI sees
+        </button>
+      )}
+      {dev && (
         <button className={`btn small ${sending ? "primary" : "ghost"}`} onClick={() => setSending((s) => !s)}>
-          Send to production…
+          Create release candidate…
         </button>
       )}
     </div>
+    {seeing && dev && <IdeaContextPanel idea={dev.target} onClose={() => setSeeing(false)} />}
     {sending && dev && <SendToProduction idea={dev.target} onClose={() => setSending(false)} />}
     </>
+  );
+}
+
+/** Where the idea stands, each item a link: its literature, uncheckpointed
+ * changes, and the newest document (marked new until seen). */
+function IdeaStatus({ dev }: { dev: DevIdea }) {
+  const scope = useResearch();
+  const files = usePoll<{ files: RdFile[] }>(`/native/rd/files?idea=${dev.target}`, 3000);
+  const changes = usePoll<{ files: unknown[] }>(`/native/rd/changes?idea=${dev.target}`, 4000);
+  const risks = riskSummary(useRisks(dev.target).data?.counts);
+  const newest = newestDocs(files.data?.files)[0];
+  const fresh = !!newest && newest.modified > (scope.drafts[seenKey(dev.target)] ?? "");
+  const pending = changes.data?.files.length;
+  useEffect(() => {
+    setBadge("changes", pending ? String(pending) : undefined);
+    setBadge("documents", fresh ? "new" : undefined);
+  }, [pending, fresh]);
+  useEffect(() => () => (setBadge("changes"), setBadge("documents")), []);
+  const c = dev.coverage;
+  const papers = c ? c.papers.primary + c.papers.secondary : 0;
+  const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+  return (
+    <span className="idea-status" role="group" aria-label="Where this idea stands">
+      {risks && (
+        <button className={`is-item ${risks.level === "err" ? "err" : risks.level === "warn" ? "warn" : ""}`} title="The idea's risks (Ideas)" onClick={() => (scope.setDraft("ideas:active", dev.target), scope.goToStage?.("ideas", "idea"))}>
+          {risks.level === "err" || risks.level === "warn" ? "▲ " : ""}
+          {risks.text}
+        </button>
+      )}
+      {c && (
+        <button className="is-item" title={c.next ? `Literature · next: ${c.next}` : "Literature"} onClick={() => scope.goToStage?.("literature", "sources")}>
+          {plural(papers, "paper")} · {plural(c.notes.total, "note")}
+          {c.notes.contradicts ? ` (${c.notes.contradicts} contra)` : ""}
+        </button>
+      )}
+      {pending !== undefined && (
+        <button className={`is-item ${pending ? "warn" : ""}`} title={pending ? "Changes since the last checkpoint: not yet checkpointed" : "Everything is checkpointed"} onClick={() => scope.goToStage?.("research", "changes")}>
+          {pending ? plural(pending, "change") : "checkpointed"}
+        </button>
+      )}
+      {newest && (
+        <button
+          className={`is-item ${fresh ? "new" : ""}`}
+          title={`Newest document: ${newest.path}`}
+          onClick={() => {
+            scope.setDraft(docKey(dev.target), newest.path);
+            scope.setDraft(seenKey(dev.target), newest.modified);
+            scope.goToStage?.("research", "documents");
+          }}
+        >
+          {newest.path.split("/").pop()}
+          {fresh ? " • new" : ""}
+        </button>
+      )}
+    </span>
+  );
+}
+
+/** Put a reference to what is on screen into Pi's input (nothing is sent). */
+export function AskPi({ text }: { text: string }) {
+  const scope = useResearch();
+  return (
+    <button className="btn small ghost" title="Add a reference to Pi’s input. Nothing is sent until you send it there." onClick={() => scope.appendComposer(text)}>
+      Ask Pi
+    </button>
   );
 }
 
@@ -172,7 +231,8 @@ function Notebook({ text }: { text: string }) {
 }
 
 /** One workspace file, shown the way it reads best (refetched when it changes). */
-export function RdViewer({ idea, file }: { idea: string; file: RdFile }) {
+/** One file: a workspace file by default, or any route returning the same shape (`url`, e.g. a run's output). */
+export function RdViewer({ idea, file, url, askPi }: { idea: string; file: RdFile; url?: string; askPi?: string }) {
   const scope = useResearch();
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
@@ -181,12 +241,12 @@ export function RdViewer({ idea, file }: { idea: string; file: RdFile }) {
     let live = true;
     setError("");
     scope.client
-      .read(`/native/rd/file?idea=${idea}&path=${encodeURIComponent(file.path)}`)
+      .read(url ?? `/native/rd/file?idea=${idea}&path=${encodeURIComponent(file.path)}`)
       .then((d) => live && setData(d), (e) => live && setError(errorText(e)));
     return () => {
       live = false;
     };
-  }, [idea, file.path, file.modified]);
+  }, [idea, file.path, file.modified, url]);
   const ext = file.path.split(".").pop()?.toLowerCase() ?? "";
   const bytes = useMemo(() => (data?.base64 ? fromBase64(data.base64) : null), [data]);
   const rendered = ["md", "markdown", "ipynb", "csv", "tsv"].includes(ext);
@@ -234,6 +294,7 @@ export function RdViewer({ idea, file }: { idea: string; file: RdFile }) {
             {source ? "Rendered" : "Source"}
           </button>
         )}
+        <AskPi text={askPi ?? `About \`${file.path}\` in this workspace: `} />
       </div>
       <div className="rd-viewer-body">{body}</div>
     </div>
@@ -313,16 +374,21 @@ export function DocumentsPane() {
   const scope = useResearch();
   const dev = developingIdea(scope.view, scope.drafts);
   const { data, error } = usePoll<{ files: RdFile[] }>(dev ? `/native/rd/files?idea=${dev.target}` : null, 3000);
-  const [chosen, setChosen] = useState<Record<string, string>>({});
+  const visible = useContext(PaneVisible);
+  const docs = newestDocs(data?.files);
+  const selected = (dev && docs.find((f) => f.path === scope.drafts[docKey(dev.target)])) || docs[0] || null;
+  // The newest document counts as seen once it is on screen here.
+  const seen = dev ? scope.drafts[seenKey(dev.target)] ?? "" : "";
+  useEffect(() => {
+    if (dev && visible && selected && selected === docs[0] && selected.modified > seen) scope.setDraft(seenKey(dev.target), selected.modified);
+  }, [dev?.target, visible, selected?.path, selected?.modified, seen]);
   if (!dev) return <NoIdea />;
-  const docs = (data?.files ?? []).filter((f) => f.document && f.path !== "README.md").sort((a, b) => b.modified.localeCompare(a.modified));
-  const selected = docs.find((f) => f.path === chosen[dev.target]) ?? docs[0] ?? null;
   return (
     <div className="rd-split">
       <nav className="rd-tree" aria-label="Documents">
         {error && <p className="notice error">{error}</p>}
         {docs.map((f) => (
-          <button key={f.path} className={`rd-doc ${selected?.path === f.path ? "on" : ""}`} title={f.path} onClick={() => setChosen((c) => ({ ...c, [dev.target]: f.path }))}>
+          <button key={f.path} className={`rd-doc ${selected?.path === f.path ? "on" : ""}`} title={f.path} onClick={() => scope.setDraft(docKey(dev.target), f.path)}>
             <span className="t">
               <span className="g">{glyph(f)}</span> {f.path.split("/").pop()}
             </span>
@@ -406,6 +472,7 @@ function FileDiff({ idea, file, sha }: { idea: string; file: ChangedFile; sha?: 
           {file.path}
         </span>
         <span className="dim">{file.binary ? "binary" : <><span className="add">+{file.added}</span> <span className="del">−{file.removed}</span></>}</span>
+        <AskPi text={sha ? `About the changes to \`${file.path}\` in checkpoint ${sha.slice(0, 8)}: ` : `About my changes to \`${file.path}\` since the last checkpoint: `} />
       </div>
       <div className="rd-viewer-body">
         {error ? (

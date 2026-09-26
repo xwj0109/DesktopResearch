@@ -17,6 +17,9 @@ export type PaneKind =
   | "graph"
   | "code"
   | "runs"
+  | "experiments"
+  | "candidate"
+  | "features"
   | "results"
   | "conclusion"
   | "portfolio";
@@ -38,7 +41,10 @@ export const paneLabels: Record<PaneKind, string> = {
   data: "Contract",
   graph: "Graph",
   code: "Code",
-  runs: "Experiments",
+  runs: "Runs",
+  experiments: "Experiments",
+  candidate: "Candidate",
+  features: "Features",
   results: "Results",
   conclusion: "Conclusion",
   portfolio: "Evidence",
@@ -59,6 +65,9 @@ export const paneGlyphs: Record<PaneKind, string> = {
   graph: "◇",
   code: "λ",
   runs: "▶",
+  experiments: "▷",
+  candidate: "◎",
+  features: "ƒ",
   results: "◩",
   conclusion: "✓",
   portfolio: "◈",
@@ -76,14 +85,16 @@ export interface StageLayout {
 /** Stage pane contracts from the product handover (§5). The Design & Code
  * arrangement — Pi upper left, graph lower left, code right — is fixed. */
 export const stageLayouts: Record<LayoutStage, StageLayout> = {
-  ideas: { a: ["pi"], c: ["sources", "idea"], split: 0.46, stack: 0.6 },
+  ideas: { a: ["pi"], c: ["idea", "sources"], split: 0.46, stack: 0.6 },
   literature: { a: ["pi"], c: ["sources"], split: 0.44, stack: 0.6 },
   // One workspace per pursued idea: its Pi on the left, its work on the right.
-  research: { a: ["pi"], c: ["files", "changes", "documents", "snapshots", "spec", "sources"], split: 0.4, stack: 0.6 },
+  research: { a: ["pi"], c: ["runs", "documents", "changes", "features", "files", "snapshots"], split: 0.4, stack: 0.6 },
   // Production data for the idea in production: live feeds, what they hold, their quality, the contract.
-  data: { a: ["pi"], c: ["feeds", "explorer", "quality", "data"], split: 0.4, stack: 0.6 },
-  code: { a: ["pi"], b: ["graph"], c: ["code"], split: 0.42, stack: 0.56 },
-  backtests: { a: ["pi"], c: ["runs"], split: 0.42, stack: 0.6 },
+  // Release: the candidate, and the live data it needs.
+  data: { a: ["pi"], c: ["candidate", "feeds", "explorer", "quality"], split: 0.4, stack: 0.6 },
+  // Legacy stages: the earlier record system (spec, contract, graph, code, reference experiments).
+  code: { a: ["pi"], b: ["graph"], c: ["code", "spec", "data"], split: 0.42, stack: 0.56 },
+  backtests: { a: ["pi"], c: ["experiments"], split: 0.42, stack: 0.6 },
   results: { a: ["pi"], c: ["results", "conclusion"], split: 0.4, stack: 0.6 },
   portfolio: { a: ["pi"], c: ["portfolio"], split: 0.44, stack: 0.6 },
 };
@@ -100,6 +111,8 @@ export interface LayoutState {
   outer?: "row" | "column";
   /** Inner split of the left column: a above b (`column`) or beside it (`row`). */
   inner?: "row" | "column";
+  /** Per tile, a second of its panes shown below the current tab (e.g. Changes below Documents). */
+  below?: Partial<Record<SlotId, string>>;
 }
 
 export const RATIO_MIN = 0.2,
@@ -151,7 +164,10 @@ export const paneBlurbs: Record<PaneKind, string> = {
   data: "Data contracts, handoffs, feasibility findings and bounded dataset samples.",
   graph: "Component graph with stable identities, interfaces, assumptions and linked code.",
   code: "Editor over versioned source with diffs. Nothing executes here.",
-  runs: "Queue reference experiments; inspect exact inputs, status history and logs.",
+  runs: "The workspace's code run as recorded runs: what ran, metrics, outputs, logs; compare two.",
+  experiments: "Queue reference experiments; inspect exact inputs, status history and logs.",
+  candidate: "The release candidate: its exact checkpoint, data and checks, and validating it.",
+  features: "The features research.toml declares: source, lookback and when each value is known.",
   results: "Disclosed results: equity and drawdown, interval references and lineage.",
   conclusion: "Interpretation with supporting and contradicting evidence and limitations.",
   portfolio: "Frozen strategy evidence, portfolio analyses and producer feedback.",

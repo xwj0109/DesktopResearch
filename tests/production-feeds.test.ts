@@ -11,6 +11,7 @@ import { FeedCatalog } from "../server/feeds/catalog.ts";
 import { FeedDaemon, SERVICE_FILE } from "../server/feeds/daemon.ts";
 import { FeedService } from "../server/feeds/service.ts";
 import { feedDir, feedsDefDir } from "../server/feeds/model.ts";
+import { RdWorkspaces } from "../server/workbench/rd.ts";
 import type { WorkerContext } from "../server/feeds/workers.ts";
 
 const SID = "11111111-1111-4111-8111-111111111111";
@@ -240,6 +241,33 @@ test("feed service: the user's own script runs in the idea workspace on a schedu
   assert.match(status().detail, /columns changed/);
   assert.equal(cat.partitions(SID, def.id).length, 2);
   assert.ok(fs.existsSync(feedsDefDir(strategyRoot)));
+});
+
+test("a production script runs its sent checkpoint: editing the workspace afterwards changes nothing that runs", async (t) => {
+  const root = tmp(t);
+  const strategyRoot = path.join(root, "workspaces", "strategies", SID);
+  const rd = new RdWorkspaces(() => strategyRoot);
+  const ws = await rd.ensure(SID, WS, "Funding carry");
+  fs.writeFileSync(path.join(ws, "pull.sh"), `printf 'date,value\\n2026-01-02,1.5\\n' > "$PI_RESEARCH_OUT"; test -d data && echo data-linked`);
+  const sent = await rd.checkpoint(ws, "Production pull");
+  await rd.tag(ws, "candidate/1", sent.sha);
+  // Research carries on in the live workspace, uncheckpointed.
+  fs.writeFileSync(path.join(ws, "pull.sh"), `printf 'date,value\\n2026-01-02,9.9\\n' > "$PI_RESEARCH_OUT"`);
+  const cat = new FeedCatalog(() => strategyRoot);
+  const def = cat.create(SID, { kind: "script", command: "sh pull.sh", every: "1d", timeColumn: "date", backfillFrom: "2026-01-01" } as any, () => WS, (w) => (w === WS ? sent.sha : undefined));
+  assert.equal((def as any).checkpoint, sent.sha);
+  const daemon = new FeedDaemon(root, { deps: noNetwork, socket: fakeSockets().socket, log: () => {} }, 60_000);
+  t.after(() => daemon.stop());
+  await daemon.scan();
+  const dir = feedDir(strategyRoot, def.id);
+  const status = () => JSON.parse(fs.readFileSync(path.join(dir, "status.json"), "utf8"));
+  assert.ok(await waitFor(() => fs.existsSync(path.join(dir, "status.json")) && status().state === "waiting"), JSON.stringify(fs.existsSync(path.join(dir, "status.json")) && status()));
+  const [part] = cat.partitions(SID, def.id);
+  assert.equal((await read(path.join(dir, part.file)))[0].value, 1.5, "the sent checkpoint ran, not the edited file");
+  assert.match(fs.readFileSync(path.join(dir, "script.log"), "utf8"), /data-linked/, "data/ is available as in the workspace");
+  assert.match(fs.readFileSync(path.join(ws, "pull.sh"), "utf8"), /9\.9/, "the workspace itself is untouched");
+  // The tag keeps the checkpoint, and cannot be moved to another one.
+  await assert.rejects(rd.tag(ws, "candidate/1", "0".repeat(40)), /already names another/);
 });
 
 test("collection switch (child mode): on starts the service and it heartbeats; off stops it; nothing is installed", async (t) => {

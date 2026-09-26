@@ -4,6 +4,8 @@ import React from "react";
 import { create, act } from "react-test-renderer";
 import { ResearchProvider } from "../src/workbench/research";
 import { IdeaBoard } from "../src/workbench/panes/IdeaBoard";
+import { ideaSchema, versionInput } from "../src/platform";
+import { pruneBlankItems } from "../src/form-prune";
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).window = { innerWidth: 1440, addEventListener() {}, removeEventListener() {}, setTimeout };
@@ -67,7 +69,20 @@ function harness(initialDrafts: Record<string, string>) {
         view = { ...view, ideas: applyOp(structuredClone(view.ideas), body) };
         return { ideas: view.ideas };
       }
-      const c = body.command;
+      // The registry operations (server/workbench/tools.ts saveIdea / decideIdea / deleteIdea),
+      // recorded as the science commands they journal.
+      const latest = (id: string) => view.science.state.versions.filter((v: any) => v.id === id).sort((a: any, b: any) => b.version - a.version)[0];
+      let c: any;
+      if (path === "/native/idea-save") {
+        const t: string = body.target;
+        const content = t.startsWith("d:") ? view.ideas.cards.find((x: any) => x.key === t.slice(2)).content : view.ideas.edits[t.slice(2)];
+        c = { type: "version.create", value: versionInput.parse({ kind: "idea", content: pruneBlankItems(ideaSchema, content) }), ...(t.startsWith("r:") ? { id: t.slice(2) } : {}) };
+      } else if (path === "/native/idea-decide") {
+        const v = latest(body.target.slice(2));
+        if (body.expectedHash && body.expectedHash !== v.hash) throw new Error("newer version");
+        c = { type: "idea.decide", target: { id: v.id, hash: v.hash }, decision: body.decision, reason: body.reason };
+      } else if (path === "/native/idea-delete") c = { type: "idea.delete", id: body.target.slice(2) };
+      else throw new Error(`Unexpected write ${path}`);
       commands.push(c);
       const s = structuredClone(view.science.state);
       if (c.type === "version.create") {
@@ -83,7 +98,22 @@ function harness(initialDrafts: Record<string, string>) {
       }
       if (c.type === "idea.decide") s.decisions.push({ id: String(commands.length), target: c.target, decision: c.decision, reason: c.reason, at: new Date(Date.now() + commands.length * 1000).toISOString() });
       view = { ...view, science: { revision: view.science.revision + 1, state: s } };
-      return {};
+      const b = structuredClone(view.ideas);
+      if (path === "/native/idea-save") {
+        const t: string = body.target;
+        if (t.startsWith("d:")) b.cards = b.cards.filter((x: any) => x.key !== t.slice(2));
+        else delete b.edits[t.slice(2)];
+        view = { ...view, ideas: b };
+        const saved = t.startsWith("r:") ? t.slice(2) : s.versions.at(-1).id;
+        return { saved: `r:${saved}`, version: latest(saved).version };
+      }
+      if (path === "/native/idea-delete") {
+        delete b.edits[c.id];
+        b.archived = b.archived.filter((x: string) => x !== c.id);
+        view = { ...view, ideas: b };
+        return { deleted: body.target };
+      }
+      return { decided: c.decision };
     },
     bridge: {},
   };
@@ -190,7 +220,7 @@ test("idea board: brainstorm freely, save, decide with a reason, revise, cite hi
 
   // A pursued idea continues in Literature, focused there.
   await click("Work on in Literature", saved());
-  assert.equal(h.drafts()["literature:focus"], "r:cccccccc-3333-4333-8333-000000000001");
+  assert.equal(h.drafts()["idea:current"], "r:cccccccc-3333-4333-8333-000000000001");
   assert.deepEqual(h.stages.at(-1), ["literature", "sources"]);
 
   // Editing a saved idea keeps a pending next version until saved.

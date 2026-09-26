@@ -1,11 +1,13 @@
 import { strategyRenameSchema, strategyDeleteSchema } from "../../src/strategy-management-contract.ts";
 import { reviewPrepareSchema, reviewDuplicateSchema, reviewIdeaSchema, reviewReferenceSchema, reviewDeleteSchema } from "../../src/review-contract.ts";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { Store } from "../store.ts";
 import { hash as sha256 } from "../store.ts";
 import type { Platform } from "../platform.ts";
+import { pruneBlankItems } from "../../src/form-prune.ts";
 import { ideaSchema } from "../../src/platform.ts";
 import { findAll, locateQuote } from "../../src/workbench/pdfText.ts";
 import {
@@ -15,8 +17,7 @@ import {
   type IdeaBoardOp,
   type IdeaDraftContent,
   type IdeaBoardState,
-  ideaStatus,
-} from "../../src/idea-board-contract.ts";
+  ideaStatus, ideaDecideInputSchema, ideaDeleteInputSchema, ideaSaveInputSchema } from "../../src/idea-board-contract.ts";
 import {
   createPaperSearch,
   defaultPaperDeps,
@@ -35,6 +36,10 @@ import { feedCreateSchema, feedCreateToolSchema, feedDeleteSchema, feedServiceSc
 import { FeedCatalog } from "../feeds/catalog.ts";
 import { FeedService } from "../feeds/service.ts";
 import { DataFeeds, INTERVALS, type FetchSource } from "./data.ts";
+import { RunService } from "./runs.ts";
+import { DEFAULT_RUN_LIMIT, candidateValidateSchema, finished, runBatchSchema, runLimitSchema, runSubmitSchema, type Run, type RunBatch, type RunSubmit } from "../../src/run-contract.ts";
+import { MANIFEST_FILE, readManifest, type ResearchManifest } from "../../src/research-manifest.ts";
+import { riskAddSchema, riskDeleteSchema, riskOrder, riskSetSchema, type Risk } from "../../src/risk-contract.ts";
 import { MARKETS } from "./binance-archive.ts";
 import { ViewChannel } from "./view-channel.ts";
 
@@ -55,11 +60,25 @@ export interface WorkbenchTool<I = any> {
   /** Hints for clients (MCP tool annotations); no behavioural effect here. */
   readOnly?: boolean;
   destructive?: boolean;
+  /** The input field naming the idea this tool acts on. In a conversation bound
+   * to one idea (CallScope), an omitted value means that idea, and changes to
+   * any other idea are refused; reads of other ideas stay allowed. */
+  ideaField?: "idea" | "target";
   run(ctx: ToolContext, input: I): Promise<unknown> | unknown;
+}
+/** Who is calling: a conversation bound to one saved idea (r:<id>), e.g. that
+ * idea's Research Development Pi. Set by the backend from the connection, never
+ * from the window's selection. */
+export interface CallScope {
+  idea?: string;
+  /** Adapters (MCP, Pi) call as "agent"; windows as "user" (the default). */
+  origin?: "user" | "agent";
 }
 export interface ToolContext {
   sid: string;
   wb: Workbench;
+  /** Who asked: the user through a window, or an agent through an adapter. */
+  origin: "user" | "agent";
 }
 export interface ToolManifest {
   name: string;
@@ -73,17 +92,26 @@ export interface ToolManifest {
  * stage (MCP instructions, which Pi receives as prompt guidelines), so every
  * runtime learns its role from the same text. */
 export const STAGE_GUIDANCE: Record<(typeof stageIds)[number], string> = {
-  ideas: "This conversation is the Ideas stage: brainstorm and refine idea drafts with the user, and save or decide on ideas when asked.",
+  ideas:
+    "This conversation is the Ideas stage: brainstorm and refine idea drafts with the user, and save or decide on ideas when asked. Once an idea is saved, offer to draft the 3–5 risks that could make it unusable in practice (risk_add: data availability or rights, feature timing, compute, latency, cost), most fundamental first, each with the cheapest test; keep unknowns unknown rather than guessing.",
   literature:
-    "This conversation is the Literature stage. It works on the ideas the user decided to pursue: start from ideas_pursued (each idea at its latest saved version, with the decision reason and the sources it already cites). The window works on one focus idea at a time (ideas_pursued.focus; change it with literature_focus when asked): unless the user says otherwise, \"find papers\", ranking (source_importance with idea) and comments are about the focus idea, or about every pursued idea when there is no focus. For those ideas, find and import relevant papers when asked, read them, highlight and comment on the passages that support, contradict or refine each idea, and say which idea each finding bears on. Treat ideas not marked pursue as out of scope unless the user brings them in. When a passage bears on an idea, create the note with its stance (note_create with stance, or note_link): supports, contradicts or refines; idea_notes shows the evidence gathered for an idea so far. When a finding should change an idea, offer idea_add_note: it adds the note to the idea as an unsaved revision for the user to edit and save. Each pursued idea's coverage lists its gaps: use them to suggest what to read or look for next, especially evidence that could contradict an idea, and re-judge notes made on an earlier version.",
+    "This conversation is the Explore stage (literature). It works on the ideas the user decided to pursue: start from ideas_pursued (each idea at its latest saved version, with the decision reason and the sources it already cites). The window works on one focus idea at a time (ideas_pursued.focus; change it with literature_focus when asked): unless the user says otherwise, \"find papers\", ranking (source_importance with idea) and comments are about the focus idea, or about every pursued idea when there is no focus. For those ideas, find and import relevant papers when asked, read them, highlight and comment on the passages that support, contradict or refine each idea, and say which idea each finding bears on. Treat ideas not marked pursue as out of scope unless the user brings them in. When a passage bears on an idea, create the note with its stance (note_create with stance, or note_link): supports, contradicts or refines; idea_notes shows the evidence gathered for an idea so far. When a finding should change an idea, offer idea_add_note: it adds the note to the idea as an unsaved revision for the user to edit and save. Each pursued idea's coverage lists its gaps: use them to suggest what to read or look for next, especially evidence that could contradict an idea, and re-judge notes made on an earlier version.",
   research:
-    "This conversation is the Research Development stage for one pursued idea, and your working directory is that idea's own workspace (a git repository the app checkpoints). Develop the research with the user: write and run exploratory scripts and code with your own tools, produce documents there (markdown reports, figures, CSV tables, PDFs), and shape the research specification. Keep work for this idea in this folder. The user sees the files, the changes since the last checkpoint and the documents in the right-hand panes; record a checkpoint (rd_checkpoint, with a short message) when the user asks or offers one at meaningful points. Use idea_get or ideas_pursued for the idea itself and idea_notes for its literature evidence. Real data: the strategy's frozen snapshots are in data/ (read-only Parquet; data_snapshots lists them with their columns). Process them with polars, lazily for tick data (pl.scan_parquet on a snapshot folder, filter and aggregate before collect), rather than loading everything into memory. When the user asks for data, fetch it with data_fetch: tick-level trades, aggregated trades, 1s bars, order-book depth, best bid/ask, open interest, funding and option summaries from the Binance archive (spot, USDⓈ-M, COIN-M, options; data_estimate first for big ranges), or bars from Binance, Coinbase and FRED series; watch data_jobs; for other sources, such as Bloomberg or files the user has, write the file with the user's own code in the workspace and register it with data_register (with a note on its source). Never modify files in data/; derive new files in the workspace instead.",
+    "This conversation is the Develop stage (Research Development) for one pursued idea, and your working directory is that idea's own workspace (a git repository the app checkpoints). Start from idea_context: where the idea stands (risks, literature, workspace, runs, candidate) and the suggested next steps; the user sees the same summary. Develop the research with the user: write and run exploratory scripts and code with your own tools, produce documents there (markdown reports, figures, CSV tables, PDFs), and shape the research specification. Keep work for this idea in this folder. The user sees the files, the changes since the last checkpoint and the documents in the right-hand panes; record a checkpoint (rd_checkpoint, with a short message) when the user asks or offers one at meaningful points. Use idea_get or ideas_pursued for the idea itself and idea_notes for its literature evidence. Real data: the strategy's frozen snapshots are in data/ (read-only Parquet; data_snapshots lists them with their columns). Process them with polars, lazily for tick data (pl.scan_parquet on a snapshot folder, filter and aggregate before collect), rather than loading everything into memory. When the user asks for data, fetch it with data_fetch: tick-level trades, aggregated trades, 1s bars, order-book depth, best bid/ask, open interest, funding and option summaries from the Binance archive (spot, USDⓈ-M, COIN-M, options; data_estimate first for big ranges), or bars from Binance, Coinbase and FRED series; watch data_jobs; for other sources, such as Bloomberg or files the user has, write the file with the user's own code in the workspace and register it with data_register (with a note on its source). Never modify files in data/; derive new files in the workspace instead. Results you will compare or report should come from recorded runs: declare entries in research.toml ([run.<name>] command = \"uv run python train.py\", optional inputs = [snapshot names]; [env] lock = \"uv.lock\"), start them with run_submit (they run a clean copy of the checkpoint, so edits after that do not change them), have the code write outputs/metrics.json (flat names → numbers) and other results to $PI_RESEARCH_OUTPUTS, follow them with run_status or run_logs, and compare with run_compare, which says when two runs are not like for like. You may start a limited number of runs and run minutes per hour (runs_list shows the limit and what is used); when a run needs more, say so and let the user start it. For a bounded search (a few settings or variants), use run_batch with rankBy: the app writes a summary to reports/ when the last run ends; read it and propose what to keep. The idea's risks (risk_list) say what could make it unusable: test the most fundamental unknown ones first with small runs, and record the result with risk_set (status measured-ok or failed, evidence {run}); when a risk fails, say so plainly and offer the ways forward (revise the idea, work around it, or stop).",
   data:
-    "This conversation is the Data stage, the first production stage. It works on the idea sent to production (production_status: its exact version, workspace checkpoint and the snapshots its research used) and builds production data for it: live and scheduled feeds, their contracts and quality checks. Production data is live and continuously updated, not exploratory; be precise about schemas, units, timing, latency and gaps.",
+    "This conversation is the Release stage. It works on the release candidate (candidate_status, production_status: its exact version, workspace checkpoint and the snapshots its research used): validating it, and building the production data it needs: live and scheduled feeds, their contracts and quality checks. Production data is live and continuously updated, not exploratory; be precise about schemas, units, timing, latency and gaps. candidate_status shows the release candidate, its checks and validation runs; candidate_validate runs its entry on exactly its checkpoint.",
   code: "This conversation is the Design & Code stage: design and implement the strategy code.",
   backtests: "This conversation is the Backtests stage: plan and run experiments with exact inputs.",
   results: "This conversation is the Results stage: interpret results and write conclusions.",
 };
+/** A conversation bound to one idea follows it through Explore, Develop and Release. */
+export const IDEA_GUIDANCE = [
+  "This conversation belongs to one pursued idea and follows it through the stages: Explore (its literature), Develop (its workspace and runs) and Release (its release candidate).",
+  "idea_context says where the idea stands and which stage the window shows (window.stage: literature = Explore, research = Develop, data = Release); act for that stage, and keep the same thread of work across them.",
+  `In Explore: ${STAGE_GUIDANCE.literature}`,
+  `In Develop: ${STAGE_GUIDANCE.research}`,
+  `In Release: ${STAGE_GUIDANCE.data}`,
+].join(" ");
 export const isStage = (s: unknown): s is (typeof stageIds)[number] => typeof s === "string" && (stageIds as readonly string[]).includes(s);
 
 /** Guidance shared by every runtime (Pi prompt guidelines, MCP instructions). */
@@ -217,6 +245,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "idea_get",
+    ideaField: "target",
     title: "Read an idea",
     description: "Read one idea in full: all fields, evidence, status, version, the last decision and its reason.",
     input: z.object({ target: optionalTarget }).strict(),
@@ -237,6 +266,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "idea_update",
+    ideaField: "target",
     title: "Edit an idea",
     description: "Change fields of an idea. Drafts are edited in place; a saved idea gets pending edits that become its next version when saved. Only the fields given are changed; evidence replaces the whole list.",
     input: z.object({ target: optionalTarget, patch: ideaDraftPatchSchema.refine((p) => Object.keys(p).length > 0, "Give at least one field to change") }).strict(),
@@ -250,17 +280,28 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "idea_save",
+    ideaField: "target",
     title: "Save an idea version",
     description: "Save the idea as an immutable scientific version (v1 for a draft, the next version for a saved idea with edits). All fields are required. Only when the user asks.",
-    input: z.object({ target: optionalTarget }).strict(),
+    input: ideaSaveInputSchema,
     run: ({ sid, wb }, { target }) => wb.saveIdea(sid, wb.resolveIdea(sid, target)),
   }),
   define({
     name: "idea_decide",
+    ideaField: "target",
     title: "Decide on an idea",
     description: "Record pursue, revise or reject, with a reason, on the latest saved version of an idea (it must have no unsaved edits). Pursue stays with the idea through later versions; revise and reject are answered by the next version, which returns it to to-decide. Only when the user asks.",
-    input: z.object({ target: optionalTarget, decision: z.enum(["pursue", "revise", "reject"]), reason: text.trim().min(1) }).strict(),
-    run: ({ sid, wb }, { target, decision, reason }) => wb.decideIdea(sid, wb.resolveIdea(sid, target), decision, reason),
+    input: ideaDecideInputSchema,
+    run: ({ sid, wb }, { target, decision, reason, expectedHash }) => wb.decideIdea(sid, wb.resolveIdea(sid, target), decision, reason, expectedHash),
+  }),
+  define({
+    name: "idea_delete",
+    ideaField: "target",
+    title: "Delete an archived idea",
+    description: "Permanently delete an archived idea: every version, the decisions on it and its stored text. Refused unless the idea is archived, and while another record cites it. Only on an explicit request to delete that idea.",
+    input: ideaDeleteInputSchema,
+    destructive: true,
+    run: ({ sid, wb }, { target }) => wb.deleteIdea(sid, target),
   }),
   define({
     name: "idea_open",
@@ -289,6 +330,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "rd_files",
+    ideaField: "idea",
     title: "List workspace files",
     description: "List the files in an idea's Research Development workspace (code, data, documents), with size, modification time and whether each is a document the Documents pane shows.",
     input: z.object({ idea: rdIdea }).strict(),
@@ -300,6 +342,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "rd_read",
+    ideaField: "idea",
     title: "Read a workspace file",
     description: "Read one file of an idea's workspace (text up to 1 MiB; PDFs and images as base64).",
     input: z.object({ idea: rdIdea, path: z.string().min(1).max(500) }).strict(),
@@ -308,6 +351,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "rd_changes",
+    ideaField: "idea",
     title: "Changes since the last checkpoint",
     description: "The files changed in an idea's workspace since its last checkpoint: status (A new, M modified, D deleted), lines added and removed (binary files flagged), and totals. Read one file's diff with rd_diff.",
     input: z.object({ idea: rdIdea }).strict(),
@@ -316,6 +360,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "rd_diff",
+    ideaField: "idea",
     title: "One file's diff",
     description: "The unified diff of one file in an idea's workspace: against the last checkpoint, or within a checkpoint (sha from rd_history). Capped at 512 KiB per file (truncated says so).",
     input: z.object({ idea: rdIdea, path: z.string().min(1).max(500), sha: z.string().regex(/^[0-9a-f]{7,40}$/).optional() }).strict(),
@@ -324,6 +369,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "rd_checkpoint",
+    ideaField: "idea",
     title: "Record a checkpoint",
     description: "Record the workspace's current state as a checkpoint (a git commit) with a short message, so later changes are shown against it. Refused when nothing changed.",
     input: z.object({ idea: rdIdea, message: z.string().trim().min(1).max(500) }).strict(),
@@ -335,6 +381,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "rd_history",
+    ideaField: "idea",
     title: "Workspace checkpoints",
     description: "The checkpoints of an idea's workspace, newest first; give sha for one checkpoint's files (status and line counts), then rd_diff with that sha for a file.",
     input: z.object({ idea: rdIdea, sha: z.string().regex(/^[0-9a-f]{7,40}$/).optional() }).strict(),
@@ -348,15 +395,17 @@ export const tools: WorkbenchTool[] = [
   /* ── Production (after Research Development) ─────────────────────── */
   define({
     name: "production_commit",
-    title: "Send an idea to production",
+    ideaField: "idea",
+    title: "Create a release candidate",
     description:
-      "Send a pursued idea from Research Development to the production stages (Data, Design & Code, Backtests, Results). Freezes the idea's exact version, its workspace checkpoint and the data snapshots the work used (default: those its code references). Refused while the workspace has changes not yet checkpointed. Replaces the current production idea (earlier commits are kept). Only when the user asks.",
+      "Create a release candidate from a pursued idea in Research Development, for the production stages (Data, Design & Code, Backtests, Results) to work on. Freezes the idea's exact version, its workspace checkpoint and the data snapshots the work used (default: those its code references). Refused while the workspace has changes not yet checkpointed. Replaces the current production idea (earlier commits are kept). Only when the user asks.",
     input: productionCommitInputSchema,
     run: async ({ sid, wb }, input) => wb.commitProduction(sid, input),
   }),
   define({
     name: "production_preview",
-    title: "Preview sending an idea to production",
+    ideaField: "idea",
+    title: "Preview a release candidate",
     description: "What production_commit would freeze for an idea: its version, the workspace's last checkpoint, changes not yet checkpointed (which block the commit), and the data snapshots with whether its code references them.",
     input: z.object({ idea: z.string().regex(/^r:[0-9a-f-]{36}$/).optional() }).strict(),
     readOnly: true,
@@ -391,11 +440,13 @@ export const tools: WorkbenchTool[] = [
     name: "feed_create",
     title: "Create a production feed",
     description:
-      'Create a production feed; the background service starts collecting it within seconds when collection is on. kind "stream": a live exchange stream (Binance spot/um/cm: trades, aggTrades, klines, bookTicker, depth10, markPrice, liquidations; Coinbase: trades, ticker), optionally backfilling complete past days from the Binance archive. kind "pull": scheduled incremental pulls (binance-archive datasets, Binance or Coinbase bars, FRED). kind "script": the user\'s own command run on a schedule in an idea workspace, writing CSV or Parquet to $PI_RESEARCH_OUT (rows after $PI_RESEARCH_SINCE). Data lands in hourly (streams) or daily partitions, frozen once closed. Only when the user asks.',
+      'Create a production feed; the background service starts collecting it within seconds when collection is on. kind "stream": a live exchange stream (Binance spot/um/cm: trades, aggTrades, klines, bookTicker, depth10, markPrice, liquidations; Coinbase: trades, ticker), optionally backfilling complete past days from the Binance archive. kind "pull": scheduled incremental pulls (binance-archive datasets, Binance or Coinbase bars, FRED). kind "script": the user\'s own command run on a schedule in an idea workspace (for the idea in production, in a clean copy of its sent checkpoint, so later edits to the workspace do not change it), writing CSV or Parquet to $PI_RESEARCH_OUT (rows after $PI_RESEARCH_SINCE). Data lands in hourly (streams) or daily partitions, frozen once closed. Only when the user asks.',
     input: feedCreateToolSchema,
     run: ({ sid, wb }, raw) => {
       const input = feedCreateSchema.parse(raw);
-      const def = wb.feeds.create(sid, input, () => wb.store.get(sid).production?.current?.idea.slice(2));
+      const current = wb.store.get(sid).production?.current;
+      // A script for the idea in production runs its sent checkpoint, not the live workspace.
+      const def = wb.feeds.create(sid, input, () => current?.idea.slice(2), (ws) => (current && current.idea === `r:${ws}` ? current.checkpoint : undefined));
       wb.view.publish(sid, { type: "refresh" });
       return def;
     },
@@ -471,7 +522,7 @@ export const tools: WorkbenchTool[] = [
     description: "One snapshot's manifest with a preview (first and last rows, a thinned series of its close/value column) and the code in idea workspaces that references its file.",
     input: z.object({ name: z.string().regex(/^[a-z0-9-]{1,120}$/) }).strict(),
     readOnly: true,
-    run: ({ sid, wb }, { name }) => ({ ...wb.data.snapshot(sid, name), references: wb.data.references(sid, name) }),
+    run: ({ sid, wb }, { name }) => ({ ...wb.data.snapshot(sid, name), references: wb.data.references(sid, name), retainedBy: wb.retainedBy(sid, name) }),
   }),
   define({
     name: "data_symbols",
@@ -558,10 +609,13 @@ export const tools: WorkbenchTool[] = [
     name: "data_delete",
     title: "Delete a data snapshot",
     description:
-      "Delete a data snapshot for good (its file or daily folder and its manifest), freeing the disk. It cannot be restored; the source can be fetched again as a new snapshot. Returns the code in idea workspaces that referenced it. Only on an explicit request to delete that snapshot; check data_preview and tell the user what referenced it.",
+      "Delete a data snapshot for good (its file or daily folder and its manifest), freeing the disk. Refused while a release candidate (production commit, current or earlier) uses it. It cannot be restored; the source can be fetched again as a new snapshot. Returns the code in idea workspaces that referenced it. Only on an explicit request to delete that snapshot; check data_preview and tell the user what referenced it.",
     input: z.object({ name: z.string().regex(/^[a-z0-9-]{1,120}$/) }).strict(),
     destructive: true,
     run: ({ sid, wb }, { name }) => {
+      const kept = wb.retainedBy(sid, name);
+      if (kept.length)
+        throw new Error(`Snapshot ${name} is kept by the release candidate${kept.length === 1 ? "" : "s"} ${kept.map((c) => `“${c.title}” v${c.version}`).join(", ")}: a candidate's data must stay so it can be run again.`);
       const r = wb.data.delete(sid, name);
       wb.view.publish(sid, { type: "refresh" });
       return r;
@@ -576,6 +630,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "data_register",
+    ideaField: "idea",
     title: "Register a file as a data snapshot",
     description:
       "Freeze a data file from an idea's workspace (CSV, CSV.GZ, TSV, Parquet or JSON; e.g. written by the user's own code from Bloomberg or another paid feed) as a shared snapshot with provenance. The file is copied; give a title and a note saying where it came from.",
@@ -587,6 +642,157 @@ export const tools: WorkbenchTool[] = [
       const { preview: _, ...rest } = m;
       return rest;
     },
+  }),
+
+  /* ── Runs: the workspace's code, executed and recorded ───────────── */
+  define({
+    name: "runs_list",
+    ideaField: "idea",
+    title: "List runs",
+    description:
+      "An idea's runs, newest first (status, entry or command, checkpoint, time, key metrics), the entries and features its research.toml declares ([[feature]] name, source, lookback, available_after: how long after the event the value is known), and the agent run limit with what has been used in the last hour.",
+    input: z.object({ idea: rdIdea, limit: z.number().int().min(1).max(200).optional() }).strict(),
+    readOnly: true,
+    run: async ({ sid, wb }, { idea, limit }) => wb.runsOverview(sid, idea, limit),
+  }),
+  define({
+    name: "run_submit",
+    ideaField: "idea",
+    title: "Run the workspace code",
+    description:
+      "Run the idea workspace's code as a recorded run: a research.toml [run.<entry>] or a shell command (e.g. \"uv run python train.py\"), in a clean copy of the workspace's checkpoint with data/ linked. Changes not yet checkpointed are checkpointed first, so the run records exactly what ran. The run writes results to $PI_RESEARCH_OUTPUTS (outputs/): outputs/metrics.json (flat names → numbers) becomes the run's metrics, and every file there is kept with its hash. Returns at once; follow it with run_status. Agents may use a limited number of runs and run minutes per hour; beyond that, ask the user.",
+    input: runSubmitSchema,
+    run: ({ sid, wb, origin }, input) => wb.submitRun(sid, input, origin),
+  }),
+  define({
+    name: "run_batch",
+    ideaField: "idea",
+    title: "Run a batch",
+    description:
+      "Start several runs of one checkpoint together (up to 20): variants of an entry or command, e.g. different lookbacks via arguments or environment variables. The whole batch must fit the agent run limit. When the last run ends, the app writes a summary report to reports/ in the workspace (a table of runs, their resources and metrics, ranked by rankBy), which the user sees in Documents. Use it for a bounded search, then read the summary and propose what to keep.",
+    input: runBatchSchema,
+    run: ({ sid, wb, origin }, input) => wb.submitBatch(sid, input, origin),
+  }),
+  define({
+    name: "run_status",
+    title: "A run's status and results",
+    description: "One run: status and why it ended, the exact checkpoint, command, environment lock, hardware and data it used, wall time and peak memory, metrics, output files, and the end of its log.",
+    input: z.object({ run: z.uuid() }).strict(),
+    readOnly: true,
+    run: ({ sid, wb }, { run }) => ({ ...wb.runs.read(sid, run), logTail: wb.runs.log(sid, run).text.slice(-4000) }),
+  }),
+  define({
+    name: "run_logs",
+    title: "A run's log",
+    description: "A chunk of a run's log (stdout and stderr, up to 64 KiB) from offset; without offset, the end of the log. `next` is the offset to continue from.",
+    input: z.object({ run: z.uuid(), offset: z.number().int().min(0).optional() }).strict(),
+    readOnly: true,
+    run: ({ sid, wb }, { run, offset }) => wb.runs.log(sid, run, offset),
+  }),
+  define({
+    name: "run_output",
+    title: "Read a run's output file",
+    description: "Read one file a run wrote to outputs/ (text up to 1 MiB; PDFs and images as base64). run_status lists them.",
+    input: z.object({ run: z.uuid(), path: z.string().min(1).max(500) }).strict(),
+    readOnly: true,
+    run: ({ sid, wb }, { run, path: rel }) => wb.rd.read(wb.runs.outputsDir(sid, run), rel),
+  }),
+  define({
+    name: "run_cancel",
+    title: "Cancel a run",
+    description: "Stop a queued or running run. Its log and any outputs so far are kept.",
+    input: z.object({ run: z.uuid() }).strict(),
+    run: ({ sid, wb }, { run }) => wb.runs.cancel(sid, run),
+  }),
+  define({
+    name: "run_compare",
+    title: "Compare two runs",
+    description:
+      "Two runs side by side: what differs in how they ran (checkpoint, command, data snapshots, environment lock, hardware) and their metrics with differences. Warns when they are not like for like, so a metric difference may not come from the code change alone.",
+    input: z.object({ a: z.uuid(), b: z.uuid() }).strict(),
+    readOnly: true,
+    run: ({ sid, wb }, { a, b }) => compareRuns(wb.runs.read(sid, a), wb.runs.read(sid, b)),
+  }),
+  define({
+    name: "run_limit_set",
+    title: "Set the agent run limit",
+    description: "How many runs and run minutes an agent may use in any hour without the user. Only the user can change it.",
+    input: runLimitSchema,
+    run: ({ sid, wb, origin }, limit) => {
+      if (origin !== "user") throw new Error("Only the user can change the agent run limit (Runs pane).");
+      const r = wb.store.setRunLimit(sid, limit);
+      wb.view.publish(sid, { type: "refresh" });
+      return r;
+    },
+  }),
+
+  /* ── What the agent knows about an idea ────────────────────────── */
+  define({
+    name: "idea_context",
+    ideaField: "idea",
+    title: "Where an idea stands",
+    description:
+      "One compact summary of an idea, built from its records: the hypothesis, its risks (worst first, stale ones marked), literature coverage, the workspace (changes not checkpointed, last checkpoint, newest documents), recent runs with metrics, the release candidate, the agent run budget, what the window shows, and suggested next steps. Read it at the start of a conversation and whenever you lose track; the user sees the same summary as \"What the AI sees\".",
+    input: z.object({ idea: rdIdea }).strict(),
+    readOnly: true,
+    run: ({ sid, wb }, { idea }) => wb.ideaContext(sid, wb.riskIdea(sid, idea)),
+  }),
+
+  /* ── Risks: what could make an idea unusable, and how well it is known ── */
+  define({
+    name: "risk_list",
+    ideaField: "idea",
+    title: "An idea's risks",
+    description:
+      "The idea's risks, worst first (failed, unknown, estimated, waived, measured-ok), each with its kind, evidence (a run, a note or text) and whether that evidence is stale (measured on other data or environment than the latest run, or before the current release candidate).",
+    input: z.object({ idea: rdIdea }).strict(),
+    readOnly: true,
+    run: ({ sid, wb }, { idea }) => wb.riskList(sid, wb.riskIdea(sid, idea)),
+  }),
+  define({
+    name: "risk_add",
+    ideaField: "idea",
+    title: "Add a risk",
+    description:
+      "Add a risk to an idea: one sentence on what could make it unusable in practice (data availability or rights, feature timing, compute, memory, latency, cost). When an idea is framed or pursued, draft its 3–5 most important risks as unknown, most fundamental first, and suggest the cheapest test for each.",
+    input: riskAddSchema,
+    run: ({ sid, wb, origin }, input) => wb.addRisk(sid, input, origin),
+  }),
+  define({
+    name: "risk_set",
+    ideaField: "idea",
+    title: "Update a risk",
+    description:
+      "Change a risk's status, text, kind or evidence. After a run tests a risk, set measured-ok or failed with evidence {run}. waived needs a reason. Only record failed or waived with the user's agreement when it changes the direction of the work.",
+    input: riskSetSchema,
+    run: ({ sid, wb, origin }, input) => wb.setRisk(sid, input, origin),
+  }),
+  define({
+    name: "risk_delete",
+    ideaField: "idea",
+    title: "Delete a risk",
+    description: "Remove a risk from an idea. Only on an explicit request.",
+    input: riskDeleteSchema,
+    destructive: true,
+    run: ({ sid, wb }, { idea, risk }) => wb.deleteRisk(sid, wb.riskIdea(sid, idea), risk),
+  }),
+
+  /* ── Release candidate ───────────────────────────────────────────── */
+  define({
+    name: "candidate_status",
+    title: "The release candidate",
+    description: "The current release candidate: its idea version, checkpoint, entry, data, the checks (environment lock, snapshots kept) and its validation runs; plus earlier candidates.",
+    input: z.object({}).strict(),
+    readOnly: true,
+    run: async ({ sid, wb }) => wb.candidateStatus(sid),
+  }),
+  define({
+    name: "candidate_validate",
+    title: "Validate the release candidate",
+    description:
+      "Run the current release candidate's entry (its research.toml entry or command) on exactly its checkpoint, as a recorded validation run. The workspace's later changes are not used. Counts towards the agent run limit.",
+    input: candidateValidateSchema,
+    run: ({ sid, wb, origin }, input) => wb.validateCandidate(sid, input, origin),
   }),
 
   /* ── Sources ─────────────────────────────────────────────────────── */
@@ -724,6 +930,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "note_link",
+    ideaField: "idea",
     title: "Link a note to an idea",
     description:
       'Say how a highlight or comment bears on an idea: supports, contradicts or refines it ("unclassified" links without a stance, "none" removes the link). The link records the idea\'s current version. Omit idea to use the Literature focus. The note itself is unchanged.',
@@ -740,6 +947,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "idea_add_note",
+    ideaField: "idea",
     title: "Add a note to an idea as evidence",
     description:
       "Revise an idea from a finding: add a highlight or comment (quote, page, comment, and its stance on the idea) to the idea's evidence as an unsaved revision, and open it in the Idea pane. Nothing is saved as a version; the user edits and saves it (a pursued idea stays pursued). Omit idea to use the Literature focus. The same note is not added twice.",
@@ -748,6 +956,7 @@ export const tools: WorkbenchTool[] = [
   }),
   define({
     name: "idea_notes",
+    ideaField: "idea",
     title: "Notes on an idea",
     description:
       "The highlights and comments linked to an idea, with stance, source, page, quote and the idea version each was judged against; plus counts by stance. Omit idea to use the Literature focus.",
@@ -804,6 +1013,8 @@ export interface IdeaSummary {
   target: string;
   status: "draft" | "to-decide" | "pursue" | "revise" | "reject";
   version: number | null;
+  /** The latest saved version's hash (pass as expectedHash when deciding). */
+  hash?: string;
   edited: boolean;
   archived: boolean;
   content: IdeaDraftContent;
@@ -827,6 +1038,7 @@ export class Workbench {
     this._service = s;
   }
   readonly data: DataFeeds;
+  readonly runs: RunService;
   readonly search: (sid: string, text: string) => Promise<import("../../desktop/papers.ts").PaperHit[] | null>;
   private byName = new Map(tools.map((t) => [t.name, t]));
   constructor(
@@ -839,6 +1051,17 @@ export class Workbench {
     this.rd = new RdWorkspaces((sid) => store.storage.strategyRoot(sid));
     this.feeds = new FeedCatalog((sid) => store.storage.strategyRoot(sid));
     this.data = new DataFeeds((sid) => store.storage.strategyRoot(sid), papers);
+    this.runs = new RunService(
+      (sid) => store.storage.strategyRoot(sid),
+      () => store.ids(),
+      (sid) => this.data.snapshots(sid).map((s) => ({ name: s.name, file: s.file, sha256: s.sha256 })),
+      {
+        onChange: (sid, run) => {
+          this.view.publish(sid, { type: "refresh" });
+          if (run.batch && finished(run.status)) this.summariseBatch(sid, run.batch);
+        },
+      },
+    );
   }
 
   manifest(): ToolManifest[] {
@@ -854,16 +1077,30 @@ export class Workbench {
     });
   }
   /** The single entry point every adapter uses. Throws readable errors. */
-  async call(sid: string, name: string, raw: unknown) {
+  async call(sid: string, name: string, raw: unknown, scope: CallScope = {}) {
     const tool = this.byName.get(name);
     if (!tool) throw new Error(`Unknown workbench tool: ${name}`);
     if (sid.startsWith("portfolio:")) throw new Error("Open a strategy to use the workbench panes.");
     const parsed = tool.input.safeParse(raw ?? {});
     if (!parsed.success)
       throw new Error(`Invalid input for ${name}: ${parsed.error.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; ").slice(0, 600)}`);
-    return tool.run({ sid, wb: this }, parsed.data);
+    return tool.run({ sid, wb: this, origin: scope.origin ?? "user" }, this.bind(sid, tool, parsed.data, scope));
+  }
+  /** Keep a bound conversation on its own idea, whatever the window shows. */
+  private bind(sid: string, tool: WorkbenchTool, input: any, scope: CallScope) {
+    const field = tool.ideaField;
+    if (!field || !scope.idea) return input;
+    const given = input[field];
+    if (given === undefined || given === null) return { ...input, [field]: scope.idea };
+    if (given !== scope.idea && !tool.readOnly) {
+      const v = this.savedIdea(sid, scope.idea);
+      const title = v ? `“${this.savedContent(sid, v).title}” (${scope.idea})` : scope.idea;
+      throw new Error(`This conversation works on ${title}, so ${tool.name} may not change ${given}. Do that in the other idea's own conversation, or in the Ideas stage.`);
+    }
+    return input;
   }
   close() {
+    this.runs.close(); // runs themselves keep going; the next start reconciles them
     this._service?.dispose();
     this.view.close();
     return this.pdf.close();
@@ -911,6 +1148,7 @@ export class Workbench {
         target: `r:${v.id}`,
         status: this.status(sid, v).status,
         version: v.version,
+        hash: v.hash,
         edited: !!board.edits[v.id],
         archived: board.archived.includes(v.id),
         content: board.edits[v.id] ?? this.savedContent(sid, v),
@@ -1023,10 +1261,15 @@ export class Workbench {
       pending,
       snapshots: this.data.snapshots(sid).map((s) => ({ name: s.name, title: s.title, bytes: s.bytes, referenced: this.data.references(sid, s.name).some((r) => r.idea === target) })),
       current: this.store.get(sid).production?.current ?? null,
+      // What validating the candidate would run (research.toml entries; the checkpoint equals the workspace when nothing is pending).
+      entries: entriesOf(this.liveManifest(dir).manifest),
+      risks: this.riskList(sid, target).counts,
+      failedRisks: this.riskList(sid, target).risks.filter((r) => r.status === "failed").map((r) => r.text),
+      defaultEntry: defaultEntry(this.liveManifest(dir).manifest) ?? null,
     };
   }
   /** Freeze an idea for production: exact version, clean workspace checkpoint, snapshots used. */
-  async commitProduction(sid: string, input: { idea?: string; snapshots?: string[]; note?: string }) {
+  async commitProduction(sid: string, input: { idea?: string; snapshots?: string[]; note?: string; entry?: string; acceptFailedRisks?: string }) {
     const target = input.idea ?? this.developIdea(sid);
     if (!target) throw new Error("No idea given and none is being developed in the window. Use ideas_pursued for targets.");
     const p = this.pursuedIdeas(sid).find((i) => i.target === target);
@@ -1036,6 +1279,10 @@ export class Workbench {
     if (pending.length)
       throw new Error(`The idea's workspace has ${pending.length} change${pending.length === 1 ? "" : "s"} not yet checkpointed. Record a checkpoint first, so production gets an exact state.`);
     const [cp] = await this.rd.history(dir, 1);
+    const risks = this.riskList(sid, target).risks;
+    const failed = risks.filter((r) => r.status === "failed");
+    if (failed.length && !input.acceptFailedRisks)
+      throw new Error(`${failed.length} of the idea's risks failed (${failed.map((r) => `“${r.text}”`).join("; ")}). Revise the idea or work around them, or, if the user decides to go ahead, give acceptFailedRisks with the reason.`);
     const all = this.data.snapshots(sid);
     const names = input.snapshots ?? all.filter((s) => this.data.references(sid, s.name).some((r) => r.idea === target)).map((s) => s.name);
     const snapshots = names.map((n) => {
@@ -1054,9 +1301,379 @@ export class Workbench {
       ...(input.note ? { note: input.note } : {}),
       committedAt: new Date().toISOString(),
     };
+    const p0 = this.store.get(sid).production;
+    const number = (p0?.history.length ?? 0) + (p0?.current ? 1 : 0) + 1;
+    const entry = input.entry ?? defaultEntry(readManifest(await this.rd.fileAt(dir, cp.sha, MANIFEST_FILE)).manifest);
+    Object.assign(commit, {
+      number,
+      ...(entry ? { entry } : {}),
+      ...(risks.length ? { risks: risks.map((r) => ({ id: r.id, text: r.text, status: r.status })) } : {}),
+      ...(failed.length ? { acceptedFailedRisks: input.acceptFailedRisks } : {}),
+    });
+    await this.rd.tag(dir, `candidate/${number}`, cp.sha);
     this.store.commitProduction(sid, commit);
     this.view.publish(sid, { type: "refresh" });
     return commit;
+  }
+  /* ── idea context ──────────────────────────────────────────────── */
+  async ideaContext(sid: string, target: string) {
+    const v = this.savedIdea(sid, target)!;
+    const content = this.savedContent(sid, v);
+    const p = this.pursuedIdeas(sid).find((i) => i.target === target);
+    const status = this.status(sid, v);
+    const risks = this.riskList(sid, target);
+    const { dir } = await this.rdWorkspace(sid, target);
+    const pending = (await this.rd.changes(dir)).files.length;
+    const [cp] = await this.rd.history(dir, 1);
+    const documents = this.rd
+      .files(dir)
+      .filter((f) => f.document && f.path !== "README.md")
+      .sort((a, b) => b.modified.localeCompare(a.modified))
+      .slice(0, 3)
+      .map((f) => ({ path: f.path, modified: f.modified }));
+    const runs = this.runs.list(sid, target);
+    const prod = this.store.get(sid).production;
+    const cand = prod?.current?.idea === target ? await this.candidateStatus(sid) : null;
+    const coverage = p?.coverage ?? null;
+    const next: string[] = [];
+    const failed = risks.risks.find((r) => r.status === "failed");
+    const unknown = risks.risks.find((r) => r.status === "unknown");
+    const stale = risks.risks.find((r) => r.stale);
+    if (failed) next.push(`A risk failed: “${failed.text}”. Revise the idea, work around it, or stop.`);
+    if (stale) next.push(`Re-check the stale risk “${stale.text}” (${stale.stale})`);
+    if (unknown) next.push(`Test the risk “${unknown.text}” with the cheapest run that could fail it.`);
+    if (!risks.risks.length) next.push("Name the 3–5 risks that could make this idea unusable (risk_add).");
+    if (pending) next.push(`${pending} change${pending === 1 ? "" : "s"} not checkpointed.`);
+    if (!runs.length) next.push("No recorded runs yet: add a research.toml entry and run it (run_submit).");
+    if (coverage?.next) next.push(`Literature: ${coverage.next}`);
+    if (cand?.current && cand.state === "not validated") next.push(`Validate release candidate ${cand.current.number} (candidate_validate).`);
+    const view = this.view.context(sid);
+    return {
+      idea: {
+        target,
+        title: content.title,
+        version: v.version,
+        status: status.status,
+        pursuedSince: p?.pursuedOnVersion ?? null,
+        rationale: content.rationale,
+        universe: content.universe,
+        horizon: content.horizon,
+        falsification: content.falsification,
+        pendingEdits: p?.pendingEdits ?? false,
+      },
+      window: { stage: view.stage ?? null, current: view.developIdea === target },
+      risks: { counts: risks.counts, top: risks.risks.slice(0, 6).map((r) => ({ id: r.id, text: r.text, kind: r.kind, status: r.status, stale: r.stale })) },
+      literature: coverage ? { papers: coverage.papers.primary + coverage.papers.secondary, notes: coverage.notes, next: coverage.next } : null,
+      workspace: { pending, lastCheckpoint: cp ? { sha: cp.sha, message: cp.message, at: cp.at } : null, newestDocuments: documents },
+      runs: runs.slice(0, 5).map((r) => ({ id: r.id, label: r.entry ?? r.command, status: r.status, commit: r.commit.slice(0, 8), when: r.createdAt, metrics: Object.fromEntries(Object.entries(r.metrics ?? {}).slice(0, 6)), candidate: r.candidate })),
+      candidate: cand?.current ? { number: cand.current.number, version: cand.current.version, checkpoint: cand.current.checkpoint.slice(0, 8), state: cand.state } : null,
+      agentRuns: { limit: this.runLimit(sid), used: this.agentUsage(sid) },
+      next: next.slice(0, 5),
+    };
+  }
+
+  /* ── risks ─────────────────────────────────────────────────────── */
+  /** The idea risks are about: the given saved idea, else the window's current one. */
+  riskIdea(sid: string, idea?: string) {
+    const t = idea ?? this.developIdea(sid) ?? this.focusIdea(sid);
+    if (!t) throw new Error("No idea given and none is current in the window. Use ideas_pursued for targets.");
+    if (!this.savedIdea(sid, t)) throw new Error(`Idea ${t} is not a saved idea. Save it before adding risks.`);
+    return t;
+  }
+  /** Risks worst first, with their evidence resolved and whether it has gone stale. */
+  riskList(sid: string, target: string) {
+    const risks = this.store.get(sid).risks?.[target.slice(2)] ?? [];
+    const runs = this.runs.list(sid, target);
+    const latest = runs.find((r) => r.status === "succeeded" && r.candidate === null);
+    const c = this.store.get(sid).production?.current;
+    const candidate = c?.idea === target ? c : null;
+    const hashes = (r: Run) => r.snapshots.map((s) => s.sha256).sort().join(",");
+    const staleness = (risk: Risk): string | null => {
+      const r = risk.evidence?.run ? runs.find((x) => x.id === risk.evidence!.run) : undefined;
+      if (!r || (risk.status !== "measured-ok" && risk.status !== "failed")) return null;
+      if (latest && latest.id !== r.id && hashes(latest) !== hashes(r)) return `Measured on other data than the latest run (${latest.id.slice(0, 8)}).`;
+      if (latest && latest.id !== r.id && JSON.stringify(latest.environment.lock) !== JSON.stringify(r.environment.lock)) return `Measured in another environment than the latest run (${latest.id.slice(0, 8)}).`;
+      if (candidate && candidate.checkpoint !== r.commit && r.createdAt < candidate.committedAt) return `Measured on earlier code than release candidate ${candidate.number ?? ""} (${candidate.checkpoint.slice(0, 8)}).`;
+      return null;
+    };
+    const out = risks.map((risk) => {
+      const r = risk.evidence?.run ? runs.find((x) => x.id === risk.evidence!.run) : undefined;
+      return { ...risk, stale: staleness(risk), evidenceRun: r ? { id: r.id, status: r.status, commit: r.commit, label: r.entry ?? r.command } : null };
+    });
+    out.sort((a, b) => riskOrder[a.status] - riskOrder[b.status] || (a.stale ? 0 : 1) - (b.stale ? 0 : 1));
+    const count = (s: string) => risks.filter((r) => r.status === s).length;
+    return { idea: target, risks: out, counts: { failed: count("failed"), unknown: count("unknown"), estimated: count("estimated"), waived: count("waived"), measuredOk: count("measured-ok"), stale: out.filter((r) => r.stale).length } };
+  }
+  private checkEvidence(sid: string, target: string, e?: Risk["evidence"] | null) {
+    if (!e) return;
+    if (e.run && this.runs.read(sid, e.run).idea !== target) throw new Error(`Run ${e.run} belongs to another idea.`);
+    if (e.note && !this.store.get(sid).annotations.some((a) => a.id === e.note)) throw new Error(`Note ${e.note} not found. Use source_notes for ids.`);
+  }
+  addRisk(sid: string, input: { idea?: string; text: string; kind: Risk["kind"]; status?: Risk["status"]; evidence?: Risk["evidence"]; reason?: string }, origin: "user" | "agent") {
+    const target = this.riskIdea(sid, input.idea);
+    this.checkEvidence(sid, target, input.evidence);
+    if (input.status === "waived" && !input.reason) throw new Error("A waived risk needs a reason.");
+    const now = new Date().toISOString();
+    const risk: Risk = { id: randomUUID(), text: input.text, kind: input.kind, status: input.status ?? "unknown", ...(input.evidence ? { evidence: input.evidence } : {}), ...(input.reason ? { reason: input.reason } : {}), by: origin, createdAt: now, updatedAt: now };
+    this.store.changeRisks(sid, target.slice(2), (rs) => {
+      if (rs.length >= 30) throw new Error("An idea holds at most 30 risks; keep the ones that could stop it.");
+      return [...rs, risk];
+    });
+    this.view.publish(sid, { type: "refresh" });
+    return { idea: target, risk };
+  }
+  setRisk(sid: string, input: { idea?: string; risk: string; text?: string; kind?: Risk["kind"]; status?: Risk["status"]; evidence?: Risk["evidence"] | null; reason?: string }, _origin: "user" | "agent") {
+    const target = this.riskIdea(sid, input.idea);
+    this.checkEvidence(sid, target, input.evidence);
+    let updated: Risk | undefined;
+    this.store.changeRisks(sid, target.slice(2), (rs) =>
+      rs.map((r) => {
+        if (r.id !== input.risk) return r;
+        const next: Risk = { ...r, ...(input.text ? { text: input.text } : {}), ...(input.kind ? { kind: input.kind } : {}), ...(input.status ? { status: input.status } : {}), ...(input.reason !== undefined ? { reason: input.reason } : {}), updatedAt: new Date().toISOString() };
+        if (input.evidence === null) delete next.evidence;
+        else if (input.evidence) next.evidence = input.evidence;
+        if (!next.reason) delete next.reason;
+        if (next.status === "waived" && !next.reason) throw new Error("A waived risk needs a reason.");
+        return (updated = next);
+      }),
+    );
+    if (!updated) throw new Error(`Risk ${input.risk} not found on ${target}. Use risk_list for ids.`);
+    this.view.publish(sid, { type: "refresh" });
+    return { idea: target, risk: updated };
+  }
+  deleteRisk(sid: string, target: string, risk: string) {
+    let found = false;
+    this.store.changeRisks(sid, target.slice(2), (rs) => rs.filter((r) => (r.id === risk ? ((found = true), false) : true)));
+    if (!found) throw new Error(`Risk ${risk} not found on ${target}.`);
+    this.view.publish(sid, { type: "refresh" });
+    return { deleted: risk };
+  }
+
+  /* ── runs ──────────────────────────────────────────────────────── */
+  runLimit(sid: string) {
+    return this.store.get(sid).runLimit ?? DEFAULT_RUN_LIMIT;
+  }
+  /** What agents started in the last hour: runs, and the run minutes they asked for. */
+  agentUsage(sid: string) {
+    const since = Date.now() - 3600_000;
+    const recent = this.runs.list(sid).filter((r) => r.origin === "agent" && Date.parse(r.createdAt) >= since);
+    return { runs: recent.length, minutes: Math.round(recent.reduce((s, r) => s + r.wallSeconds / 60, 0)) };
+  }
+  private checkAgentLimit(sid: string, wallSeconds: number, count = 1) {
+    const limit = this.runLimit(sid),
+      used = this.agentUsage(sid);
+    if (count > 1 && (used.runs + count > limit.runs || used.minutes + (count * wallSeconds) / 60 > limit.minutes))
+      throw new Error(
+        `A batch of ${count} runs of up to ${Math.round(wallSeconds / 60)} min would exceed the agent limit (${limit.runs} runs and ${limit.minutes} run minutes per hour; ${used.runs} runs and ${used.minutes} min used). Use fewer runs or a shorter wallMinutes, or ask the user.`,
+      );
+    if (used.runs + 1 > limit.runs)
+      throw new Error(`The agent run limit is reached: ${limit.runs} run${limit.runs === 1 ? "" : "s"} per hour (${used.runs} used). Ask the user to start this run, or to raise the limit in the Runs pane.`);
+    if (used.minutes + (count * wallSeconds) / 60 > limit.minutes)
+      throw new Error(`This run would exceed the agent limit of ${limit.minutes} run minutes per hour (${used.minutes} used). Give a shorter wallMinutes (at most ${Math.max(0, limit.minutes - used.minutes)}), or ask the user.`);
+  }
+  /** The live workspace's research.toml (what the next checkpoint will hold). */
+  private liveManifest(dir: string) {
+    const f = path.join(dir, MANIFEST_FILE);
+    return readManifest(fs.existsSync(f) ? fs.readFileSync(f, "utf8") : null);
+  }
+  async runsOverview(sid: string, idea?: string, limit = 50) {
+    const { target, dir } = await this.rdWorkspace(sid, idea);
+    const { manifest, error } = this.liveManifest(dir);
+    return {
+      idea: target,
+      entries: entriesOf(manifest),
+      manifestError: error,
+      // [[feature]] from research.toml: what the model uses, and when each is known.
+      features: (manifest?.feature ?? []).map((f) => ({ ...f, name: f.name })),
+      runs: this.runs.list(sid, target).slice(0, limit).map(runSummary),
+      batches: this.runs.batches(sid, target).slice(0, 20).map((b) => ({ id: b.id, title: b.title, runs: b.runs.length, summary: b.summary ?? null, createdAt: b.createdAt })),
+      limit: this.runLimit(sid),
+      agentUsage: this.agentUsage(sid),
+    };
+  }
+  /** Run the workspace's code: checkpoint changes first, so the run records exactly what ran. */
+  async submitRun(sid: string, input: RunSubmit, origin: "user" | "agent") {
+    const { target, dir } = await this.rdWorkspace(sid, input.idea);
+    const v = this.savedIdea(sid, target)!;
+    const wallSeconds = (input.wallMinutes ?? 60) * 60;
+    const { manifest, error } = this.liveManifest(dir);
+    const { entry, command, inputs } = resolveEntry(manifest, error, input.entry, input.command);
+    if (origin === "agent") this.checkAgentLimit(sid, wallSeconds);
+    let autoCheckpoint = false;
+    if ((await this.rd.changes(dir)).files.length) {
+      await this.rd.checkpoint(dir, `Before run: ${entry ?? command.slice(0, 80)}`);
+      autoCheckpoint = true;
+    }
+    const [cp] = await this.rd.history(dir, 1);
+    const run = this.runs.start(sid, {
+      idea: target,
+      title: this.savedContent(sid, v).title,
+      workspace: dir,
+      commit: cp.sha,
+      checkpointMessage: cp.message,
+      autoCheckpoint,
+      entry,
+      command,
+      inputs,
+      candidate: null,
+      origin,
+      wallSeconds,
+      ...(input.note ? { note: input.note } : {}),
+    });
+    this.view.publish(sid, { type: "refresh" });
+    return runSummary(run);
+  }
+  /** Several runs of one checkpoint, started together; a summary is written when the last ends. */
+  async submitBatch(sid: string, input: RunBatch, origin: "user" | "agent") {
+    const { target, dir } = await this.rdWorkspace(sid, input.idea);
+    const v = this.savedIdea(sid, target)!;
+    const wallSeconds = (input.wallMinutes ?? 60) * 60;
+    const { manifest, error } = this.liveManifest(dir);
+    const resolved = input.runs.map((r) => ({ ...resolveEntry(manifest, error, r.entry, r.command), note: r.note }));
+    if (origin === "agent") this.checkAgentLimit(sid, wallSeconds, resolved.length);
+    let autoCheckpoint = false;
+    if ((await this.rd.changes(dir)).files.length) {
+      await this.rd.checkpoint(dir, `Before batch: ${input.title.slice(0, 80)}`);
+      autoCheckpoint = true;
+    }
+    const [cp] = await this.rd.history(dir, 1);
+    const id = randomUUID();
+    // The batch record first, so a run ending at once finds it.
+    const batch = this.runs.saveBatch(sid, { version: 1, id, idea: target, title: input.title, runs: [], rankBy: input.rankBy ?? null, higherIsBetter: input.higherIsBetter ?? true, origin, createdAt: new Date().toISOString() });
+    const runs = resolved.map((r) =>
+      this.runs.start(sid, {
+        idea: target,
+        title: this.savedContent(sid, v).title,
+        workspace: dir,
+        commit: cp.sha,
+        checkpointMessage: cp.message,
+        autoCheckpoint,
+        entry: r.entry,
+        command: r.command,
+        inputs: r.inputs,
+        candidate: null,
+        origin,
+        wallSeconds,
+        batch: id,
+        ...(r.note ? { note: r.note } : {}),
+      }),
+    );
+    this.runs.saveBatch(sid, { ...batch, runs: runs.map((r) => r.id) });
+    this.summariseBatch(sid, id);
+    this.view.publish(sid, { type: "refresh" });
+    return { batch: id, title: batch.title, commit: cp.sha, runs: runs.map(runSummary) };
+  }
+  /** Once every run of a batch has ended: a short report in the workspace (reports/), shown in Documents. */
+  summariseBatch(sid: string, id: string) {
+    try {
+      const b = this.runs.batch(sid, id);
+      if (b.summary || !b.runs.length) return;
+      const runs = b.runs.map((r) => this.runs.read(sid, r));
+      if (!runs.every((r) => finished(r.status))) return;
+      const metricNames = [...new Set(runs.flatMap((r) => Object.keys(r.metrics ?? {})))].slice(0, 6);
+      const rank = b.rankBy;
+      const score = (r: Run) => (rank && typeof r.metrics?.[rank] === "number" ? (r.metrics[rank] as number) : null);
+      const ordered = [...runs].sort((x, y) => {
+        const a = score(x),
+          c = score(y);
+        if (a === null || c === null) return a === null ? (c === null ? 0 : 1) : -1;
+        return b.higherIsBetter ? c - a : a - c;
+      });
+      const cell = (v: unknown) => (typeof v === "number" ? String(Number(v.toPrecision(4))) : v === undefined ? "" : String(v));
+      const mem = (n?: number) => (n ? `${(n / 1024 ** 2).toFixed(0)} MiB` : "");
+      const esc = (t: string) => t.replace(/\|/g, "\\|");
+      const best = rank ? ordered.find((r) => score(r) !== null) : undefined;
+      const hashes = new Set(runs.map((r) => r.snapshots.map((s) => s.sha256).sort().join(",")));
+      const failed = runs.filter((r) => r.status !== "succeeded");
+      const name = (r: Run) => `${esc(r.entry ?? r.command)}${r.note ? ` (${esc(r.note)})` : ""}`;
+      const lines = [
+        `# Batch: ${b.title}`,
+        "",
+        `${runs.length} runs of checkpoint \`${runs[0].commit.slice(0, 8)}\` (“${runs[0].checkpointMessage}”), started ${b.createdAt.slice(0, 16).replace("T", " ")} UTC by the ${b.origin}.${rank ? ` Ranked by **${rank}** (${b.higherIsBetter ? "higher" : "lower"} is better).` : ""}`,
+        "",
+        `| # | run | status | wall time | peak memory |${metricNames.map((m) => ` ${m} |`).join("")}`,
+        `|---|---|---|---|---|${metricNames.map(() => "---|").join("")}`,
+        ...ordered.map((r, i) => `| ${i + 1} | ${name(r)} | ${r.status} | ${r.usage ? `${r.usage.wallSeconds} s` : ""} | ${mem(r.usage?.peakMemoryBytes)} |${metricNames.map((m) => ` ${cell(r.metrics?.[m])} |`).join("")}`),
+        "",
+        ...(best ? [`**Best:** ${name(best)}, ${rank} = ${cell(score(best))}.`, ""] : []),
+        ...(failed.length ? [`**Did not succeed:** ${failed.map((r) => `${name(r)} (${r.status}${r.reason ? `: ${r.reason}` : ""})`).join("; ")}.`, ""] : []),
+        ...(hashes.size > 1 ? ["**Note:** the runs used different data, so differences may come from the data rather than the settings.", ""] : []),
+        `Runs: ${runs.map((r) => `\`${r.id}\``).join(", ")}. Compare any two in Develop → Runs, or with run_compare.`,
+        "",
+      ];
+      const slug = b.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "batch";
+      const rel = `reports/batch-${b.createdAt.slice(0, 10)}-${slug}-${b.id.slice(0, 6)}.md`;
+      const dir = this.rd.dir(sid, b.idea.slice(2));
+      fs.mkdirSync(path.join(dir, "reports"), { recursive: true });
+      fs.writeFileSync(path.join(dir, rel), lines.join("\n"));
+      this.runs.saveBatch(sid, { ...b, summary: rel });
+      this.view.publish(sid, { type: "refresh" });
+    } catch {
+      /* a batch whose workspace or runs are gone has nothing to summarise */
+    }
+  }
+  async candidateStatus(sid: string) {
+    const p = this.store.get(sid).production;
+    const c = p?.current;
+    if (!c) return { current: null, earlier: p?.history.length ?? 0 };
+    const n = candidateNumber(p!, c);
+    const runs = this.runs.list(sid).filter((r) => r.candidate === n);
+    const { dir } = await this.rdWorkspace(sid, c.idea);
+    const lock = await this.rd.fileAt(dir, c.checkpoint, "uv.lock");
+    const { manifest } = readManifest(await this.rd.fileAt(dir, c.checkpoint, MANIFEST_FILE));
+    const last = runs.find((r) => finished(r.status));
+    return {
+      current: { ...c, number: n },
+      checks: {
+        environmentLock: !!lock || !!manifest?.env?.lock,
+        snapshotsKept: c.snapshots.length,
+        entry: c.entry ?? defaultEntry(manifest) ?? null,
+        risks: this.riskList(sid, c.idea).counts,
+      },
+      state: runs.some((r) => !finished(r.status)) ? "validating" : !last ? "not validated" : last.status === "succeeded" ? "passed" : "failed",
+      validationRuns: runs.map(runSummary),
+      earlier: p!.history.length,
+    };
+  }
+  /** Run the candidate's entry on exactly its checkpoint. */
+  async validateCandidate(sid: string, input: { entry?: string; wallMinutes?: number }, origin: "user" | "agent") {
+    const p = this.store.get(sid).production;
+    const c = p?.current;
+    if (!c) throw new Error("There is no release candidate yet. Create one in Research Development.");
+    const n = candidateNumber(p!, c);
+    const { dir } = await this.rdWorkspace(sid, c.idea);
+    const { manifest, error } = readManifest(await this.rd.fileAt(dir, c.checkpoint, MANIFEST_FILE));
+    const wanted = input.entry ?? c.entry ?? defaultEntry(manifest);
+    if (!wanted) throw new Error(`Say what validating runs: give entry (a command), or add a [run.validate] entry to ${MANIFEST_FILE} and create a new candidate.`);
+    const byName = manifest?.run?.[wanted];
+    const { entry, command, inputs } = byName ? resolveEntry(manifest, error, wanted, undefined) : { entry: null, command: wanted, inputs: [] as string[] };
+    const wallSeconds = (input.wallMinutes ?? 60) * 60;
+    if (origin === "agent") this.checkAgentLimit(sid, wallSeconds);
+    const run = this.runs.start(sid, {
+      idea: c.idea,
+      title: c.title,
+      workspace: dir,
+      commit: c.checkpoint,
+      checkpointMessage: c.checkpointMessage,
+      autoCheckpoint: false,
+      entry,
+      command,
+      inputs: [...new Set([...inputs, ...c.snapshots.map((s) => s.name)])],
+      candidate: n,
+      origin,
+      wallSeconds,
+    });
+    this.view.publish(sid, { type: "refresh" });
+    return runSummary(run);
+  }
+  /** Release candidates (current and earlier production commits) that used
+   * this exact snapshot; while any is kept, its bytes must stay. */
+  retainedBy(sid: string, name: string) {
+    const sha = this.data.snapshot(sid, name).sha256;
+    const p = this.store.get(sid).production;
+    return [...(p?.current ? [p.current] : []), ...(p?.history ?? [])]
+      .filter((c) => c.snapshots.some((x) => x.name === name && x.sha256 === sha))
+      .map((c) => ({ idea: c.idea, title: c.title, version: c.version, committedAt: c.committedAt, current: c === p?.current }));
   }
   /** The idea Research Development works on in the window, if still saved. */
   developIdea(sid: string) {
@@ -1189,7 +1806,8 @@ export class Workbench {
   saveIdea(sid: string, target: string) {
     const i = this.ideas(sid).find((x) => x.target === target)!;
     if (target.startsWith("r:") && !i.edited) throw new Error("This idea has no unsaved edits; its latest version is already saved.");
-    const parsed = ideaSchema.safeParse(i.content);
+    // Evidence rows added but left completely blank are dropped, as in the Idea pane.
+    const parsed = ideaSchema.safeParse(pruneBlankItems(ideaSchema, i.content));
     if (!parsed.success)
       throw new Error(`Cannot save yet: ${parsed.error.issues.map((x) => `${x.path.join(".")}: ${x.code === "too_small" ? "required" : x.message}`).join("; ")}`);
     const recordId = target.startsWith("r:") ? target.slice(2) : undefined;
@@ -1209,12 +1827,13 @@ export class Workbench {
     this.view.publish(sid, { type: "refresh" });
     return { saved: next, version: saved.version };
   }
-  decideIdea(sid: string, target: string, decision: "pursue" | "revise" | "reject", reason: string) {
+  decideIdea(sid: string, target: string, decision: "pursue" | "revise" | "reject", reason: string, expectedHash?: string) {
     if (!target.startsWith("r:")) throw new Error("Save the draft before recording a decision on it.");
     const i = this.ideas(sid).find((x) => x.target === target)!;
     if (i.edited) throw new Error("This idea has unsaved edits. Save or discard them first: a decision applies to an exact saved version.");
     if (i.archived) throw new Error("This idea is archived. Restore it in the Idea pane first.");
     const v = this.latestSaved(sid).get(target.slice(2))!;
+    if (expectedHash && expectedHash !== v.hash) throw new Error(`This idea has a newer version (v${v.version}) than the one you decided on. Look at it and decide again.`);
     this.platform.command(sid, {
       operationId: randomUUID(),
       revision: this.platform.strategyView(sid).revision,
@@ -1222,6 +1841,19 @@ export class Workbench {
     });
     this.view.publish(sid, { type: "refresh" });
     return { decided: decision, onVersion: v.version };
+  }
+  /** Permanently delete an archived idea, then drop it from the board. */
+  deleteIdea(sid: string, target: string) {
+    const id = target.slice(2);
+    if (!this.latestSaved(sid).has(id)) throw new Error(`Idea ${target} is not a saved idea.`);
+    if (!this.store.ideaBoard(sid).archived.includes(id)) throw new Error("Only archived ideas can be deleted. Archive it first (× in the Idea pane).");
+    this.platform.command(sid, { operationId: randomUUID(), revision: this.platform.strategyView(sid).revision, command: { type: "idea.delete", id } });
+    this.store.changeIdeas(sid, (b) => {
+      delete b.edits[id];
+      b.archived = b.archived.filter((x) => x !== id);
+    });
+    this.view.publish(sid, { type: "refresh" });
+    return { deleted: target };
   }
 
   /* ── sources ───────────────────────────────────────────────────── */
@@ -1319,4 +1951,77 @@ export class Workbench {
     this.view.publish(sid, { type: "refresh" });
     return { updated: n.id };
   }
+}
+
+/* ── run helpers ────────────────────────────────────────────────────── */
+
+const entriesOf = (m: ResearchManifest | null) => Object.entries(m?.run ?? {}).map(([name, e]) => ({ name, command: e.command, description: e.description ?? null }));
+/** A candidate's default validation entry: "validate", else the only entry. */
+function defaultEntry(m: ResearchManifest | null) {
+  const names = Object.keys(m?.run ?? {});
+  return names.includes("validate") ? "validate" : names.length === 1 ? names[0] : undefined;
+}
+function resolveEntry(m: ResearchManifest | null, error: string | null, entry?: string, command?: string) {
+  if (entry) {
+    if (error) throw new Error(error);
+    const e = m?.run?.[entry];
+    if (!e) {
+      const names = Object.keys(m?.run ?? {});
+      throw new Error(`${MANIFEST_FILE} has no [run.${entry}]${names.length ? `; its entries are ${names.join(", ")}` : m ? " and no entries" : " (the workspace has none)"}. Give command instead, or add the entry.`);
+    }
+    return { entry, command: e.command, inputs: e.inputs ?? [] };
+  }
+  if (command) return { entry: null, command, inputs: [] as string[] };
+  const names = Object.keys(m?.run ?? {});
+  throw new Error(`Give entry or command${names.length ? ` (entries: ${names.join(", ")})` : ""}.`);
+}
+/** Candidates made before numbering: their place in the list. */
+function candidateNumber(p: { current: ProductionCommit | null; history: ProductionCommit[] }, c: ProductionCommit) {
+  return c.number ?? p.history.length + 1;
+}
+function runSummary(r: Run) {
+  return {
+    id: r.id,
+    idea: r.idea,
+    status: r.status,
+    reason: r.reason ?? null,
+    entry: r.entry,
+    command: r.command,
+    commit: r.commit,
+    checkpointMessage: r.checkpointMessage,
+    autoCheckpoint: r.autoCheckpoint,
+    candidate: r.candidate,
+    batch: r.batch ?? null,
+    origin: r.origin,
+    createdAt: r.createdAt,
+    startedAt: r.startedAt ?? null,
+    endedAt: r.endedAt ?? null,
+    usage: r.usage ?? null,
+    metrics: r.metrics ?? {},
+    outputs: r.outputs?.length ?? 0,
+  };
+}
+/** What differs between two runs, their metrics side by side, and why they may not be like for like. */
+export function compareRuns(a: Run, b: Run) {
+  const same = (x: unknown, y: unknown) => JSON.stringify(x) === JSON.stringify(y);
+  const snaps = (r: Run) => r.snapshots.map((s) => `${s.name}@${s.sha256.slice(0, 8)}`).sort();
+  const differences = [
+    ...(a.commit !== b.commit ? [{ field: "checkpoint", a: `${a.commit.slice(0, 8)} ${a.checkpointMessage}`, b: `${b.commit.slice(0, 8)} ${b.checkpointMessage}` }] : []),
+    ...(a.command !== b.command ? [{ field: "command", a: a.command, b: b.command }] : []),
+    ...(!same(snaps(a), snaps(b)) ? [{ field: "data", a: snaps(a).join(", ") || "none", b: snaps(b).join(", ") || "none" }] : []),
+    ...(!same(a.environment.lock, b.environment.lock) ? [{ field: "environment lock", a: a.environment.lock?.sha256.slice(0, 12) ?? "none", b: b.environment.lock?.sha256.slice(0, 12) ?? "none" }] : []),
+    ...(!same(a.hardware, b.hardware) ? [{ field: "hardware", a: `${a.hardware.cpu} · ${a.hardware.cores} cores`, b: `${b.hardware.cpu} · ${b.hardware.cores} cores` }] : []),
+  ];
+  const warnings: string[] = [];
+  if (!same(snaps(a), snaps(b))) warnings.push("They used different data, so metric differences may come from the data rather than the code.");
+  if (a.command !== b.command) warnings.push("They ran different commands; check they compute the same metrics the same way.");
+  if (!same(a.environment.lock, b.environment.lock)) warnings.push("Their environments differ (lock file changed or missing).");
+  for (const r of [a, b]) if (r.status !== "succeeded") warnings.push(`Run ${r.id.slice(0, 8)} did not succeed (${r.status}); its metrics may be partial.`);
+  const names = [...new Set([...Object.keys(a.metrics ?? {}), ...Object.keys(b.metrics ?? {})])].sort();
+  const metrics = names.map((name) => {
+    const x = a.metrics?.[name],
+      y = b.metrics?.[name];
+    return { name, a: x ?? null, b: y ?? null, delta: typeof x === "number" && typeof y === "number" ? y - x : null };
+  });
+  return { a: runSummary(a), b: runSummary(b), differences, warnings, metrics, usage: { a: a.usage ?? null, b: b.usage ?? null } };
 }

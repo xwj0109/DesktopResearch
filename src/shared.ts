@@ -124,6 +124,10 @@ export interface Strategy {
   noteLinks?: Record<string, Record<string, import("./note-link-contract").NoteLink>>;
   /** The idea sent to production (and earlier commits). */
   production?: import("./production-contract").Production;
+  /** How much an agent may run without the user (runs and run minutes per hour). */
+  runLimit?: import("./run-contract").RunLimit;
+  /** Risks per saved idea (docs/WORKFLOW-REDESIGN-PLAN.md §6.2). */
+  risks?: Record<string, import("./risk-contract").Risk[]>;
 }
 export interface DeletedSource {
   artifact: Artifact;

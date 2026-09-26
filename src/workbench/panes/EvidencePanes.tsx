@@ -376,7 +376,7 @@ export function ResultsPane() {
                     </button>
                   </div>
                   <p className="note">
-                    Adds an exact run/interval reference to the composer. Nothing is sent until you press Send.
+                    Adds an exact run/interval reference to Pi’s input. Nothing is sent until you send it there.
                   </p>
                 </section>
               )}
