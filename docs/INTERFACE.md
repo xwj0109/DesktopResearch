@@ -43,8 +43,8 @@ Each stage has a fixed tiling. It is not arbitrary docking: `a` is upper left, `
 | --- | --- | --- | --- |
 | Ideas | Pi | — | Sources · Idea |
 | Literature | Pi | — | Sources · Bibliography |
-| Research Development | Pi | Sources | Research spec |
-| Data | Pi | — | Data (contracts, handoffs, feasibility, bounded samples) |
+| Research Development | Pi (the developing idea's own) | — | Files · Changes · Documents · Data · Research spec · Sources |
+| Data | Pi | — | Feeds · Explorer · Quality · Contract |
 | **Design & Code** | **Pi** | **Graph** | **Code** |
 | Backtests | Pi | — | Experiments (queue, runs, exact inputs, log) |
 | Results | Pi | — | Results · Conclusion |
@@ -62,7 +62,7 @@ Each stage has a fixed tiling. It is not arbitrary docking: `a` is upper left, `
   - **+ New idea** opens a blank idea in the editor: title, then rationale, universe, horizon and falsification as auto-growing text with prompts. Below that, "how established is it?" is a single choice (assumed · conjectured · derived · cited · tested), then evidence rows (kind, a paper or saved record, what it shows). **+ From my highlights** turns a PDF highlight into a cited evidence row, e.g. `p. 6: “quote” — comment`.
   - Drafts autosave in the window view (`researchDrafts["ideas:board"]`, at most 100) and can be duplicated, or deleted with **Undo**. The old single-form draft becomes a Brainstorm entry on first open.
   - **Save as v1** / **Save vN** (⌘S) creates the next immutable `idea` version. Missing fields are flagged inline, and evidence rows left completely blank are dropped. Editing a saved idea keeps a pending next version (tag **edited**) until you save or discard it. **History** lists every version, and **Load** copies an old version's text into the editor.
-  - **Decisions:** ⇢ on a row (pursue/revise/reject), the buttons in the editor, or dragging a row into another section, record `idea.decide` on the exact latest version, with a reason. Dropping a draft on a status saves it first. A new version returns the idea to **To decide**.
+  - **Decisions:** ⇢ on a row (pursue/revise/reject), the buttons in the editor, or dragging a row into another section, record `idea.decide` on the exact latest version, with a reason. Dropping a draft on a status saves it first. Pursue stays with the idea through new versions (the editor says "Pursued since v1"). Revise and reject are answered by the next version, which returns the idea to **To decide** (see [research flow](RESEARCH-FLOW.md)).
   - **×** on a saved idea archives it (a view-local hide, with Undo and **Restore**). From **Archived**, **Delete…** asks for inline confirmation, then sends `idea.delete`. The server removes every version of the idea and the decisions and approvals on it, journals the deletion, and then erases the idea's content blobs, unless an identical blob still backs another record. It refuses (`cited`, validated through the desktop protocol) while any other version or state row references the idea. Old journal snapshots keep only version metadata and decision reasons, never the idea text.
   - **π** appends the idea as text to the Pi composer and never sends.
 - **Graph:** dragging a node or using the arrow keys changes only its on-screen position, saved in view state. Labels, stages, interfaces, assumptions, edges, linked code and the spec reference are semantic. They are diffed against the base version before *Save graph version*. The pane flags nodes whose linked code has moved on, and warns when a newer spec has been approved since the graph's spec.
@@ -84,6 +84,112 @@ Each stage has a fixed tiling. It is not arbitrary docking: `a` is upper left, `
   - **Enter**, a double-click or **Open** opens the source for work in the reader.
   - **⌘⌫** deletes the selected source straight away, like Finder's Move to Trash. There is no confirmation step because the notice offers **Undo** and Recently deleted keeps the source. The selection moves to the next source. A source in a frozen review batch is refused with the reason. The plain Delete key does nothing.
 - **Back to the library from a paper:** the paper header has **‹ Sources**, and **Esc** does the same when the Sources pane is the active tile. Find, note editors, menus and dialogs handle Esc first; Esc in a field does not leave the paper. The paper stays open as a tab, and focus returns to the library list.
+- **Literature focus (Literature stage only):** idea tabs sit at the top of the Sources pane: **All ideas**, then one tab per pursued idea. They appear in a compact form above the page while reading. See [research flow](RESEARCH-FLOW.md).
+  - **All ideas** (the default) lists each pursued idea as one quiet row: title and version, a thin evidence bar coloured by stance, a summary such as "8 papers · 3 notes: 2 supports, 1 contradicts" (zero stances are left out), and the next step on the right. Clicking a row focuses it. The library below keeps its library-wide sections.
+  - **A focused idea** shows its version, the pursue reason, the evidence bar with its summary, and **Next:** one suggested action. Next comes from `coverage.next`, computed in the backend from the most fundamental gap, in this order: papers, evidence, contradicting evidence, unread primary papers, notes without a stance, stale judgements. `ideas_pursued` returns the same text, so the Literature agent suggests the same step. The full list of gaps is kept for agents.
+  - **Focused on an idea:** Primary, Secondary and Other are that idea's ranks. Papers the idea cites count as Primary for it until ranked otherwise, and an explicit Other is kept. Keys 1 2 3, the row menu, drag and new arXiv papers rank for that idea; library-wide sections are untouched. A paper can have a different rank for each idea.
+  - The focus is kept per window (draft `literature:focus`) and reported with the view context (`focus=`). Agents read it from `ideas_pursued.focus` (and `sources_list.literatureFocus`), set it with `literature_focus` (pursued ideas only; the window follows), and rank per idea with `source_importance` plus `idea`. A focus that stops being pursued falls back to the overview.
+  - Per-idea ranks are stored in `ideaImportance` in the strategy store, beside the library-wide `importance`. `/native/research` includes `pursued` (as `ideas_pursued`, without full content) for the window.
+- **Research Development (one workspace per pursued idea):** see [research flow](RESEARCH-FLOW.md).
+  - **Developing bar:** across the whole stage, with tabs for the pursued ideas and the idea's version. The developing idea is the window's choice (draft `research:idea`), else the Literature focus, else the first pursued idea. The window reports it as `develop=` in the view context, and agents change it with `rd_develop` (pursued ideas only).
+  - **Pi:** the Pi pane runs that idea's own conversation (`research:<idea id>`, a stable session id per idea) in its workspace, labelled "‹strategy› · RD · ‹idea›". Its tools connection carries `?stage=research&idea=r:<id>`, so its instructions name the idea and say to work in the folder and offer checkpoints. Switching ideas switches conversations; each keeps running. With no pursued idea, the pane explains how to get one.
+  - **Workspace:** `<strategy>/Research-Workspaces/<idea id>/`, created on first use with a README and a `.gitignore` (virtualenvs, caches, node_modules), then `git init` and a "Workspace created" checkpoint. Identity is repository-local. Git runs with fixed arguments, no shell, pager, prompts or system config (`server/workbench/rd.ts`). Operations on one workspace are serialised, so panes, the Pi pane and agents never race git. Paths are confined to the workspace: `..`, `.git` and symlinks that lead out are refused.
+  - **Files:** a folder tree (folders first; caches skipped) and a viewer, refreshed every 3 s.
+  - **Changes:** a **Showing** selector at the top: *Current changes · N*, or any past checkpoint. Next to it, a summary such as "16 files · +104,289 −0 since ‹last checkpoint›". With current changes selected, **Checkpoint** takes a message and commits, and is refused when nothing changed.
+    - **File list** (left): grouped by folder, folders first and foldable, with a status letter (A new, M modified, D deleted) and line counts, or "bin" for binary files.
+    - **Diff** (right): the selected file only, fetched on its own and capped at 512 KiB, with a note when cut off. Images show as pictures.
+    - **Why per file:** the backend never builds the whole diff. `rd_changes` (git status plus numstat) returns files, counts and totals, `rd_diff` returns one file's diff for current changes or a checkpoint, and `rd_history` with `sha` returns that checkpoint's files. A multi-megabyte generated output therefore no longer blanks the view with "diff too large"; each file stays readable.
+  - **Documents:** reports, figures, tables, PDFs and notebooks, newest first.
+  - **Viewer:** Markdown renders with KaTeX maths and tables (with a **Source** toggle). CSV and TSV show as tables. Notebooks show their markdown, code and text or PNG outputs. PDFs use the read-only PDF viewer. Images show inline. Code is highlighted. Text is capped at 1 MiB and PDFs and images at 12 MiB.
+  - **Routes:** reads are unjournaled GETs (`/native/rd/files|file|changes|history?idea=r:<id>`). Checkpoints are `POST /native/rd/checkpoint`. The desktop creates and locates a workspace for Pi with `POST /native/rd/workspace`. All of these go through the registry.
+- **Data tab (Research Development):** frozen data snapshots shared by every idea of the strategy (`server/workbench/data.ts`). See [research flow](RESEARCH-FLOW.md).
+  - **Storage format:** all fetched snapshots are **Parquet** (`server/workbench/parquet.ts`, via hyparquet-writer). Compression is zstd (Node's built-in; snappy where Node lacks it). Columns are typed int64, float64, bool or string. Timestamps are `TIMESTAMP(MICROS, UTC)` from millisecond, microsecond or text times, which polars reads as `Datetime[μs, UTC]`. Row groups are 1 M rows, written as they fill.
+  - **Binance archive (the default source; tick level):** market, dataset, symbol, dates (`server/workbench/binance-archive.ts`).
+    - **Markets and datasets:**
+      - Spot: trades, aggTrades, klines (1s–1d).
+      - USDⓈ-M and COIN-M: trades, aggTrades, bookTicker, bookDepth, metrics, fundingRate (monthly files), klines, and mark/index/premium price klines. COIN-M also has liquidationSnapshot.
+      - Options: BVOLIndex and EOHSummary, which Binance no longer updates.
+    - **Listing:** files come from the bucket's S3 listing, starting at the first wanted date. The form shows an estimate as you type: files, date span, download size, days not in the archive, and free disk. Pi gets the same from `data_estimate`.
+    - **Checks and conversion:** each zip is downloaded, verified against its `.CHECKSUM` SHA-256 (a mismatch discards the whole fetch), unzipped by streaming the single entry, and parsed. Spot files are headerless and use known column names, while futures files carry a header. The result is one Parquet file per day in `<name>/`.
+    - **Manifest:** lists each day's rows, bytes, Parquet SHA-256 and the archive's SHA-256, plus the days the archive lacks. A fetch is capped at 500 GiB of download and needs 1.5× that in free disk.
+  - **Ticker suggestions:** the Symbol field is a combobox (`server/workbench/symbols.ts`, tool `data_symbols`). It opens on focus with the majors, then ranks as you type, handled with ↑/↓, Enter and Esc. The ranking is: exact; then the typed coin with a quote or separator (SOL → SOLUSDT, SOLUSDC; ETH → ETH-USD, ETH-GBP), preferring USDT, USD, USDC and similar; then other prefixes; then contains; then title matches; inactive products last.
+    - **Lists:**
+      - Binance archive: the symbols the archive holds for the chosen market and dataset (bucket listing with delimiter, paged, delisted included).
+      - Binance bars: the archive's spot bar symbols.
+      - Coinbase: its public product list, with status.
+      - FRED: a curated list of about 40 common series with titles, since FRED's search needs an API key. Any id can still be typed.
+    - Lists load on first use and are kept for 12 hours, and a concurrent first use shares one load.
+  - **Fetch data (other sources):** source (Binance or Coinbase bars, FRED), symbol, interval (1s…1w; Coinbase 1m, 5m, 15m, 1h, 6h, 1d) and a UTC date range. The result is one Parquet file. Fetches run in the background with progress and **Cancel**, and a cancelled or failed fetch keeps nothing.
+    - **Binance** uses the public market-data mirror `data-api.binance.vision`, 1,000 bars per request.
+    - **Coinbase** uses `api.exchange.coinbase.com`, 300 candles per request.
+    - **FRED** uses the keyless `fredgraph.csv` download.
+    - Requests are paced and back off on 429 or 5xx. They go only to those three https hosts, only to public addresses, and refuse redirects. The cap is 20 M rows per fetch.
+  - **Register a file:** freezes a CSV, CSV.GZ, TSV, Parquet or JSON file from the developing idea's workspace (up to 20 GiB; CSV and Parquet get a preview) as a snapshot, with a title and a note on where it came from. This is how data from Bloomberg or another paid feed, pulled by the user's own code, arrives with provenance. The app never holds credentials.
+  - **Storage:** a snapshot is `<strategy>/Data/snapshots/<name>.<ext>` (read-only; fetched data is gzipped CSV with an ISO time column) plus `<name>.json`. The JSON holds the source, query, fetch time, rows, first and last timestamps, columns, bytes, SHA-256 and a preview: the first and last 20 rows and the close or value column thinned to about 2,000 points, computed once when written. A refresh is a new snapshot, never an overwrite.
+  - **Deleting a snapshot:** **Delete…** in the snapshot's header, or ⌘⌫ in the list, always opens an inline confirmation first. It shows the space freed and the code in the strategy's idea workspaces that mentions the snapshot's file: text files up to 1 MiB, outside `data/`, `.git` and caches, listed with the idea's name. **Delete for good** removes the file or daily folder (its read-only files included) and the manifest; there is no trash, since snapshots can be gigabytes. The data can be fetched again as a new snapshot. The workspaces' own files are never touched. `data_preview` reports the same references, and `data_delete` (destructive; only on an explicit request) returns them.
+  - **In the workspace:** each idea workspace links `data/` to the snapshots, and git ignores it. The Files pane lists the workspace only. Pi is told to read `data/`, never to modify it, and how to fetch or register data.
+  - **View:** a list with rows or size per snapshot, and a detail view with rows, range, columns, file, SHA-256, fetch time and source note. The column types, a copyable polars snippet (`pl.scan_parquet("data/<name>/*.parquet")` for daily folders, otherwise `pl.read_parquet`), a chart on the time column, a line chart of the close or value (crosshair and tooltip; intraday ranges label the ends with times), and the first and last rows as a table.
+  - **Routes:** reads are unjournaled GETs (`/native/data/snapshots|jobs|preview?name=`). Fetch, cancel and register are POSTs. All go through the registry.
+- **Data stage (production live data):**
+  - **Production bar:** every production stage shows the idea in production: its title, version, checkpoint, snapshot count and when it was sent. With nothing in production, the bar links back to Research Development.
+  - **Feeds:**
+    - **Collection switch:** turns the background service on or off (`feeds_service_set`). The pane states whether it is collecting, how many feeds it serves and its last heartbeat.
+      - On macOS it is a user LaunchAgent, `~/Library/LaunchAgents/com.piresearch.feeds.<hash of data root>.plist` (RunAtLoad, KeepAlive). It runs `backend/feeds-daemon.mjs --root <data root>` and logs to `<root>/.runtime/feeds/daemon.log`, so collection continues while the app is closed. Switching off unloads and removes it.
+      - With `PI_RESEARCH_FEEDS_MODE=child` (development, tests) the same service runs as a child of the backend and nothing is installed.
+    - **From your research:** the snapshots sent to production, each with the live feed that continues it. For example, archive 1m bars become a live 1m bar stream that first fills the days since the snapshot ended from the archive. One click, **Collect live**, creates it (`seededFrom` records the snapshot).
+    - **New feed:**
+      - **Live stream:** Binance spot, USDⓈ-M or COIN-M (trades, aggTrades, bars, bookTicker, depth10, markPrice, liquidations) or Coinbase (trades, ticker). The stream can optionally backfill complete past days from the archive.
+      - **Scheduled pull:** Binance archive datasets, Binance or Coinbase bars, or FRED, every 15m, 1h, 6h or 1d.
+      - **Your script:** a command run on a schedule in the production idea's workspace with the user's login shell. It writes CSV or Parquet to `$PI_RESEARCH_OUT` with rows after `$PI_RESEARCH_SINCE`, and its time column keys the partitions. The app never holds credentials, and changed columns are refused.
+      - Symbols have suggestions.
+    - **Feed rows:** each shows its state (live, catching up, scheduled, paused, error, not collecting) as a labelled tag, its source, lag, rows today and in total, frozen partitions and the latest error. Rows have **Pause/Resume** and **Explore**. **Delete** (or ⌘⌫) opens an inline confirmation, with the option to keep the data.
+  - **Live collection is built not to lose data** (server/feeds/workers.ts `StreamWorker`):
+    - **Two connections per stream, always on.** Each message is kept once, by the exchange's sequence number: trade id, aggregated-trade id, book update id, bar open time, mark-price event time, or Coinbase trade id or sequence. Liquidations have no sequence number, so they are deduplicated by content within a minute. One connection dropping, stalling or being rotated leaves no gap.
+      - Rotation happens before Binance's 24-hour cutoff, at 20 h, staggered between the two connections, and only while the other one is live.
+    - **Liveness:** Binance connections must answer a `LIST_SUBSCRIPTIONS` request (sent on open and every 30 s, 10 s to answer); Coinbase connections subscribe to heartbeats (every second). A silent or half-open connection is replaced. Reconnects back off from 1 s to 30 s.
+    - **Exact gap fills:** trades (spot `api.binance.com/api/v3/historicalTrades`), aggregated trades (spot, USDⓈ-M and COIN-M `aggTrades?fromId=`) and Coinbase trades (paged by id) have gap-free ids. A skipped id, a restart (from the last row on disk) or a Coinbase heartbeat naming a newer trade id triggers a fetch of exactly the missing ids before any newer row is written.
+      - Bars fill skipped bar times the same way.
+      - At most 500,000 rows are fetched per gap; the rest stays missing, for the archive to repair.
+      - The resume point only moves forward, so live rows that arrive during a fill are written once.
+    - **Outages:** `outages.jsonl` records every stretch the connections did not cover by themselves: from, to, cause, rows known missing, refetched and still missing, or a hole for data without history (books, mark price, liquidations).
+      - A crash is recovered on restart: the newest open hour stays open until its gap is filled.
+      - Quality lists outages, and flags those that left data missing. Feed rows show "2 of 2 connections" and the rows refetched today.
+    - **Freezing:** periods freeze 10 s after they end. The timer never freezes a period while a feed is catching up, whether from a backfill, a fill, or a pull or script run. Writes and freezes run one at a time.
+  - **Explorer:** the chosen feed's status, latest row and lag, its columns, a copyable `pl.scan_parquet("Data/production/<id>/data/**/*.parquet")`, a chart of its main value, and the latest rows. It refreshes every 3 s.
+  - **Quality:** the feed's frozen partitions, newest first. Each lists rows, largest gap, duplicates (by trade/update id), out-of-order rows, missing bars (bar feeds), late rows, size and SHA-256. Partitions with issues are flagged with ▲.
+  - **Contract:** data contracts, handoffs and feasibility, as before.
+  - **Storage, per strategy:**
+    - Definitions: `Data/production/feeds/<id>.json`, written by the app.
+    - Per feed, `Data/production/<id>/` holds:
+      - `open/<period>.ndjson`: the open hour (streams) or day, flushed every second;
+      - `data/YYYY/MM/DD/HH.parquet` or `data/YYYY/MM/DD.parquet`: closed periods (zstd, UTC microsecond timestamps, read-only, 0400);
+      - `partitions.jsonl`: rows, SHA-256 and quality per period;
+      - `status.json` and `state.json`.
+    - The service rescans definitions every 5 s, so create, pause, resume and delete need no signal.
+    - Late rows are counted, never written into a frozen period. A restarted service resumes the current period and closes older ones.
+  - **Registry:** `feeds_list`, `feed_create`, `feed_update`, `feed_delete` (destructive), `feed_partitions`, `feed_rows`, `feeds_service`, `feeds_service_set` (only when the user asks), `production_commit`, `production_preview`, `production_status`. Reads are unjournaled GETs (`/native/feeds`, `/native/feeds/rows?id=`, `/native/feeds/partitions?id=`); changes are POSTs.
+- **Moving between Ideas and Literature:**
+  - **Revise idea:** a note's actions in Literature, with a focus set, include **Revise idea**. It adds the note to the focus idea's evidence as an unsaved revision: page, quote, comment and stance, cited to the source. Then it switches to Ideas with that idea open in the editor. Nothing is saved as a version, and saving it keeps the idea pursued. The same note is never added twice. The window uses the registry operation `idea_add_note` (`POST /native/idea-note`, `show: false`) and moves itself. Agents use the same tool, which opens the idea in the Idea pane by default.
+  - **Work on in Literature:** a pursued idea's row (↗) and its editor header (**Work on in Literature ↗**) set it as the Literature focus and switch to Literature with the Sources pane forward. Agents can set the focus with `literature_focus`.
+  - Panes hand work to another stage through `goToStage(stage, pane)` on the research scope. It switches stage and brings that pane forward in the stage's layout.
+  - While reading a paper in Literature, a compact focus selector sits above the page, so the focus idea stays visible.
+- **Coverage per idea (Literature):** each pursued idea in the overview, and the focused idea under the selector, shows its papers (primary + secondary), notes by stance (supports, contradicts, refines, unjudged) and its gaps:
+  - no primary or secondary papers yet;
+  - no evidence noted yet;
+  - supporting evidence only, nothing contradicts it yet;
+  - notes without a stance;
+  - notes judged on an earlier version;
+  - primary papers without notes.
+
+  Coverage is computed once in the backend (`ideaCoverage` in `src/idea-coverage.ts`, from the idea's ranks and linked notes on live sources) and returned by `ideas_pursued`, so the window and agents see the same numbers. The Literature agent is told to use the gaps to suggest what to read next, especially evidence that could contradict an idea.
+- **Notes linked to ideas (Literature):** see [research flow](RESEARCH-FLOW.md).
+  - **Stance buttons:** with a focus idea set, every note in the reader shows the idea's name and **supports / contradicts / refines**. Clicking a stance links the note with that stance. Clicking the active stance clears it but keeps the link, and × unlinks.
+  - **New notes:** a highlight or comment made during a focus is linked to the focus idea straight away, with its stance still to be judged. The notice says so.
+  - **Other ideas:** links to other ideas show as chips ("contradicts · Vol-managed crypto").
+  - **Versions:** a link records the idea version it was judged on. When the idea has moved on, the note shows "v1→v3".
+  - **Filter:** the notes list gains a **this idea** filter.
+  - **Storage:** links sit beside the notes (`noteLinks` in the strategy store, by note and idea), so notes cited by scientific records stay unchanged. Links of notes in Recently deleted are kept for restore.
+  - **Agents:** `note_link` sets a stance ("unclassified" links without one, "none" removes the link) and records the idea's current version. `note_create` accepts `idea` and `stance`, and the idea is checked before the note is created. `idea_notes` lists an idea's linked notes with counts by stance. `source_notes` shows each note's links. Wherever idea is omitted, the Literature focus is used. `/native/research` includes `noteLinks` and `ideaTitles` for the window.
 - **Library sections:** sources are grouped into **Primary**, **Secondary** and **Other sources**, in that order.
   - Papers you add from the arXiv bar (a picked suggestion or **Add papers**) start in **Primary**. Files imported from disk or by drop start in Other, and a paper already in the library keeps its section. Placing is a separate step after the import: if it fails, the paper stays imported in Other and the import summary says so. Agent imports (`paper_import`) are not placed. While everything is in Other, the library stays a single plain list.
   - To move the selected source, press **1** (Primary), **2** (Secondary) or **3** (Other; **0** also works). Each row also has a section menu, and rows can be dragged onto a section. While dragging, empty sections appear as drop targets.
@@ -149,10 +255,16 @@ The chat, and optionally external agents, operate the Ideas and Sources panes th
 
 - **Strategy management.** The workspace launcher offers Rename and Delete beside each strategy. Rename preserves its ID, research and conversations. Delete requires confirmation, removes the strategy from the catalog, and revokes access; research files and conversations remain on disk, and portfolio imports remain intact. There is no launcher restore action. Connected sessions, unresolved ownership, active experiments and pending review delivery block deletion. An open desktop window prepares its drafts before deletion and resumes editing if deletion is refused. The backend registry exposes `strategy_rename` and `strategy_delete` with an expected-name check.
 
-- **Registry.** There are 27 small tools, each with a precise zod input schema that is exported as JSON Schema:
-  - ideas: `ideas_list`, `idea_get`, `idea_create`, `idea_update`, `idea_save`, `idea_decide`, `idea_open`;
+- **Registry.** There are 49 small tools (including the two strategy-management tools above), each with a precise zod input schema that is exported as JSON Schema:
+  - ideas: `ideas_list`, `ideas_pursued`, `literature_focus`, `idea_get`, `idea_create`, `idea_update`, `idea_save`, `idea_decide`, `idea_open`;
   - reviews: `reviews_list`, `review_get`, `review_prepare`, `review_duplicate`, `review_create_idea`, `review_delete`;
-  - sources: `sources_list`, `source_notes`, `paper_search`, `paper_import`, `source_view`, `paper_read`, `paper_find`, `note_create`, `note_update`, `note_delete`, `source_delete`, `source_restore`, `source_importance`.
+  - Research Development: `rd_develop`, `rd_files`, `rd_read`, `rd_changes`, `rd_diff`, `rd_checkpoint`, `rd_history`;
+  - data snapshots: `data_snapshots`, `data_preview`, `data_symbols`, `data_estimate`, `data_fetch`, `data_jobs`, `data_cancel`, `data_register`, `data_delete`;
+  - sources: `sources_list`, `source_notes`, `note_link`, `idea_notes`, `idea_add_note`, `paper_search`, `paper_import`, `source_view`, `paper_read`, `paper_find`, `note_create`, `note_update`, `note_delete`, `source_delete`, `source_restore`, `source_importance`.
+
+  `ideas_pursued` is how the later stages (Literature onwards) read the ideas you decided to pursue. It returns each idea at its latest saved version (id, version, hash), with the decision reason, all fields, and its evidence with the cited sources named. Unsaved edits are never included; `pendingEdits` says whether there are any. Pursue stays with an idea as it is revised, so the list gives the latest saved version with `pursuedOnVersion`. Revise or reject on a later version removes it. Archived ideas are left out.
+
+  **Stage guidance.** Each research stage's conversation is told what the stage is for (`STAGE_GUIDANCE` in `server/workbench/tools.ts`). The desktop's Pi pane connects to the tools with `?stage=<stage>`, and the MCP `initialize` instructions then append that stage's text, which Pi receives as prompt guidelines. Literature is told to start from `ideas_pursued`, to find, read and annotate papers for those ideas, and to say which idea each finding bears on. External MCP clients connect without a stage and get only the shared guidance.
 
   `Workbench.call(strategy, name, input)` is the single entry point. It validates the input, runs the handler against current state and returns the backend's own result or a readable refusal. Tools re-read state on every call. Review preparation additionally requires the inspected workspace revision, and review reuse requires the exact snapshot hash, to reject stale inputs.
 - **Research runs in the backend, not the window.**

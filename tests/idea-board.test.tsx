@@ -88,6 +88,7 @@ function harness(initialDrafts: Record<string, string>) {
     bridge: {},
   };
   const composer: string[] = [];
+  const stages: [string, string | undefined][] = [];
   function Host() {
     const [v, setV] = React.useState<any>(view);
     const [d, setD] = React.useState<Record<string, string>>(drafts);
@@ -106,10 +107,11 @@ function harness(initialDrafts: Record<string, string>) {
         }),
       setComposer() {}, appendComposer: (t: string) => composer.push(t),
       companion: { open: [], pinned: [], active: null }, setCompanion() {},
+      goToStage: (s: string, p?: string) => stages.push([s, p]),
     };
     return <ResearchProvider value={scope}><IdeaBoard /></ResearchProvider>;
   }
-  return { Host, commands, composer, options, ops, board: () => view.ideas, drafts: () => drafts, refresh: () => setViewOuter(view) };
+  return { Host, commands, composer, options, ops, stages, board: () => view.ideas, drafts: () => drafts, refresh: () => setViewOuter(view) };
 }
 
 test("idea board: brainstorm freely, save, decide with a reason, revise, cite highlights, archive", async (t) => {
@@ -186,16 +188,23 @@ test("idea board: brainstorm freely, save, decide with a reason, revise, cite hi
   assert.deepEqual([decided.type, decided.decision, decided.reason], ["idea.decide", "pursue", "Clean falsification test"]);
   assert.deepEqual(cardsIn("Pursue"), [full.title]);
 
+  // A pursued idea continues in Literature, focused there.
+  await click("Work on in Literature", saved());
+  assert.equal(h.drafts()["literature:focus"], "r:cccccccc-3333-4333-8333-000000000001");
+  assert.deepEqual(h.stages.at(-1), ["literature", "sources"]);
+
   // Editing a saved idea keeps a pending next version until saved.
   await openCard(full.title);
   await type("Horizon", "weekly rebalance");
   assert.match(all(), /unsaved changes to v1/);
+  assert.ok(button("Work on in Literature ↗"), "the editor offers it for pursued ideas too");
   await click("Save version 2");
   assert.equal(h.commands.at(-1).id, "cccccccc-3333-4333-8333-000000000001", "v2 continues the same record");
   assert.equal(h.commands.at(-1).value.content.horizon, "weekly rebalance");
   assert.match(all(), /saved v2/);
+  assert.match(all(), /Pursued since v1: “Clean falsification test”/, "the editor says where the decision was made");
   await click("← Board");
-  assert.deepEqual(cardsIn("To decide"), [full.title], "a new version needs a new decision");
+  assert.deepEqual(cardsIn("Pursue"), [full.title], "pursue stays with the idea through revisions");
 
   // Ask Pi only fills the composer.
   await click("Ask Pi", saved());
@@ -204,10 +213,10 @@ test("idea board: brainstorm freely, save, decide with a reason, revise, cite hi
 
   // Saved ideas are archived (not deleted) and can be restored.
   await click("Archive", saved());
-  assert.deepEqual(cardsIn("To decide"), []);
+  assert.deepEqual(cardsIn("Pursue"), []);
   await click("Show archived");
   await click("Restore");
-  assert.deepEqual(cardsIn("To decide"), [full.title]);
+  assert.deepEqual(cardsIn("Pursue"), [full.title]);
 
   // Dragging a draft onto Pursue saves it, then asks why.
   await openCard("Vol-targeted momentum");

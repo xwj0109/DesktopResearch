@@ -12,7 +12,7 @@ import { platformRoutes } from "./platform-routes.ts";
 import { limits } from "../src/shared.ts";
 import { productLocations } from "./locations.ts";
 import { uncertainPublication } from "./durable.ts";
-import { Workbench } from "./workbench/tools.ts";
+import { Workbench, isStage } from "./workbench/tools.ts";
 import { McpAccess, mcpHandle } from "./workbench/mcp.ts";
 import { conversationRoutes } from "./conversation-routes.ts";
 export function createApp(
@@ -130,7 +130,10 @@ export function createApp(
     } catch (error) {
       return res.status(401).json({ jsonrpc: "2.0", id: null, error: { code: -32001, message: (error as Error).message } });
     }
-    const out = await mcpHandle(workbench, sid, req.body);
+    // Optional ?stage= (the desktop's Pi pane sets it) selects that stage's guidance.
+    const stage = isStage(req.query.stage) ? req.query.stage : undefined;
+    const idea = typeof req.query.idea === "string" && /^r:[0-9a-f-]{36}$/.test(req.query.idea) ? req.query.idea : undefined;
+    const out = await mcpHandle(workbench, sid, req.body, stage, idea);
     if (out === undefined) return res.status(202).end();
     res.json(out);
   });

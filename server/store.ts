@@ -17,7 +17,9 @@ import {
   type Artifact,
 } from "../src/shared.ts";
 import { ideaBoardSchema, emptyIdeaBoard, type IdeaBoardState } from "../src/idea-board-contract.ts";
-import { importanceMapSchema, type Importance } from "../src/source-importance-contract.ts";
+import { ideaImportanceSchema, importanceMapSchema, type Importance, type Section } from "../src/source-importance-contract.ts";
+import { noteLinksSchema, type NoteLink } from "../src/note-link-contract.ts";
+import { productionSchema, type ProductionCommit } from "../src/production-contract.ts";
 export const hash = (b: Buffer | string) =>
   createHash("sha256").update(b).digest("hex");
 const idSchema = z.uuid();
@@ -162,6 +164,9 @@ const strategyDisk = z
     deleted: z.array(deletedDisk).max(DELETED_KEPT).optional(),
     ideas: ideaBoardSchema.optional(),
     importance: importanceMapSchema.optional(),
+    ideaImportance: ideaImportanceSchema.optional(),
+    noteLinks: noteLinksSchema.optional(),
+    production: productionSchema.optional(),
   })
   .strict();
 function validateDatabase(input: unknown): Database {
@@ -336,14 +341,48 @@ export class Store {
    * research record, so it applies to the latest state without the caller's
    * revision. Ratings of deleted sources are kept for restore and dropped once
    * the source leaves recently deleted. */
-  setImportance(id: string, artifactId: string, importance: Importance | "other") {
+  setImportance(id: string, artifactId: string, importance: Importance | "other", ideaId?: string) {
     return this.change(id, this.get(id).revision, (s) => {
       this.artifact(s, artifactId);
       const known = new Set([...s.artifacts.map((a) => a.id), ...(s.deleted ?? []).map((d) => d.artifact.id)]);
+      if (ideaId) {
+        // Per idea (the caller checked it is a saved idea); "other" is kept explicitly.
+        const all = Object.fromEntries(
+          Object.entries(s.ideaImportance ?? {}).map(([k, ranks]) => [k, Object.fromEntries(Object.entries(ranks).filter(([a]) => known.has(a)))]),
+        );
+        all[ideaId] = { ...(all[ideaId] ?? {}), [artifactId]: importance as Section };
+        s.ideaImportance = ideaImportanceSchema.parse(all);
+        return;
+      }
       const next = Object.fromEntries(Object.entries(s.importance ?? {}).filter(([k]) => known.has(k) && k !== artifactId));
       if (importance !== "other") next[artifactId] = importance;
       s.importance = importanceMapSchema.parse(next);
-    }).importance!;
+    });
+  }
+  /** Record an idea sent to production (the caller verified it); the previous commit joins the history. */
+  commitProduction(id: string, commit: ProductionCommit) {
+    return this.change(id, this.get(id).revision, (s) => {
+      const prev = s.production;
+      s.production = productionSchema.parse({ current: commit, history: [...(prev?.current ? [prev.current] : []), ...(prev?.history ?? [])].slice(0, 50) });
+      this.event(s, `Sent to production: ${commit.title} v${commit.version} (checkpoint ${commit.checkpoint.slice(0, 8)})`);
+    }).production!;
+  }
+  /** Link a note to a saved idea (the caller resolved the idea and its latest
+   * version), change the stance, or remove the link (`null`). Like ranks this
+   * is organisation, so it applies to the latest state; links of deleted notes
+   * are kept for restore and dropped once the note is gone for good. */
+  setNoteLink(id: string, noteId: string, ideaId: string, link: NoteLink | null) {
+    return this.change(id, this.get(id).revision, (s) => {
+      if (!s.annotations.some((n) => n.id === noteId)) throw new Fault(404, "Note not found. Use source_notes for ids.");
+      const known = new Set([...s.annotations.map((n) => n.id), ...(s.deleted ?? []).flatMap((d) => d.annotations.map((n) => n.id))]);
+      const all = Object.fromEntries(Object.entries(s.noteLinks ?? {}).filter(([k]) => known.has(k)));
+      const mine = { ...(all[noteId] ?? {}) };
+      if (link) mine[ideaId] = link;
+      else delete mine[ideaId];
+      if (Object.keys(mine).length) all[noteId] = mine;
+      else delete all[noteId];
+      s.noteLinks = noteLinksSchema.parse(all);
+    });
   }
   event(s: Strategy, text: string) {
     s.events.push({ id: randomUUID(), at: new Date().toISOString(), text });

@@ -21,6 +21,8 @@ export const viewContextSchema = z
     page: z.number().int().min(1).max(100000).optional(),
     openArtifacts: z.array(z.uuid()).max(12).optional(),
     ideaTarget: z.string().regex(/^(d|r):[0-9a-f-]{36}$/).nullable().optional(),
+    focusIdea: z.string().regex(/^r:[0-9a-f-]{36}$/).nullable().optional(),
+    developIdea: z.string().regex(/^r:[0-9a-f-]{36}$/).nullable().optional(),
   })
   .strict();
 const names: Record<string, ConversationTab> = {
@@ -54,7 +56,7 @@ export function nativeRoutes(
     app.get(base + "/research", (req, res) => {
       const id = String(req.params.id);
       if (portfolio) return res.json({ science: platform.portfolioView(id) });
-      const { revision, artifacts, annotations, batches, deleted = [], importance = {} } = store.get(id);
+      const { revision, artifacts, annotations, batches, deleted = [], importance = {}, noteLinks = {}, production } = store.get(id);
       res.json({
         revision,
         artifacts,
@@ -63,6 +65,12 @@ export function nativeRoutes(
         batches,
         deleted: deleted.map((d) => ({ artifact: d.artifact, annotations: d.annotations.length, at: d.at })),
         ideas: store.ideaBoard(id),
+        // What Literature focuses on: the same list agents get, without full content.
+        pursued: workbench.pursuedIdeas(id).map(({ content: _, ...i }) => i),
+        noteLinks,
+        production: production ?? { current: null, history: [] },
+        // Titles for links to ideas that are not pursued (any saved idea).
+        ideaTitles: Object.fromEntries(workbench.ideas(id).filter((i) => i.target.startsWith("r:")).map((i) => [i.target.slice(2), i.content.title])),
         science: platform.strategyView(id),
       });
     });
@@ -77,6 +85,92 @@ export function nativeRoutes(
       app.post(base + "/ideas", (req, res) => {
         const sid = z.uuid().parse(req.params.id);
         res.json({ ideas: workbench.applyBoard(sid, ideaBoardOpSchema.parse(req.body)) });
+      });
+      // Research Development workspaces (reads are GETs: presentation, never journaled).
+      const rdQuery = (req: any) => z.object({ idea: z.string().regex(/^r:[0-9a-f-]{36}$/), path: z.string().max(500).optional(), sha: z.string().optional() }).strict().parse(req.query);
+      app.get(base + "/rd/diff", async (req, res) => {
+        const q = rdQuery(req);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "rd_diff", { idea: q.idea, path: q.path, ...(q.sha ? { sha: q.sha } : {}) }));
+      });
+      app.get(base + "/rd/files", async (req, res) => {
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "rd_files", { idea: rdQuery(req).idea }));
+      });
+      app.get(base + "/rd/file", async (req, res) => {
+        const q = rdQuery(req);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "rd_read", { idea: q.idea, path: q.path }));
+      });
+      app.get(base + "/rd/changes", async (req, res) => {
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "rd_changes", { idea: rdQuery(req).idea }));
+      });
+      app.get(base + "/rd/history", async (req, res) => {
+        const q = rdQuery(req);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "rd_history", { idea: q.idea, ...(q.sha ? { sha: q.sha } : {}) }));
+      });
+      app.post(base + "/rd/checkpoint", async (req, res) => {
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "rd_checkpoint", req.body));
+      });
+      // Data snapshots (reads are unjournaled GETs; fetch/cancel/register are actions).
+      app.get(base + "/data/snapshots", async (req, res) => {
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "data_snapshots", {}));
+      });
+      app.get(base + "/data/jobs", async (req, res) => {
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "data_jobs", {}));
+      });
+      app.get(base + "/data/symbols", async (req, res) => {
+        const q = z.object({ source: z.string(), q: z.string(), market: z.string().optional(), dataset: z.string().optional() }).strict().parse(req.query);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "data_symbols", { source: q.source, query: q.q, ...(q.market ? { market: q.market } : {}), ...(q.dataset ? { dataset: q.dataset } : {}) }));
+      });
+      app.get(base + "/data/estimate", async (req, res) => {
+        const q = z.object({ market: z.string(), dataset: z.string(), symbol: z.string(), interval: z.string().optional(), start: z.string(), end: z.string() }).strict().parse(req.query);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "data_estimate", q));
+      });
+      app.get(base + "/data/preview", async (req, res) => {
+        const { name } = z.object({ name: z.string() }).strict().parse(req.query);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "data_preview", { name }));
+      });
+      for (const [route, tool] of [["fetch", "data_fetch"], ["cancel", "data_cancel"], ["register", "data_register"], ["delete", "data_delete"]] as const)
+        app.post(base + "/data/" + route, async (req, res) => {
+          res.json(await workbench.call(z.uuid().parse(req.params.id), tool, req.body));
+        });
+      // The desktop's Pi pane: create (once) and locate an idea's workspace to run Pi in.
+      app.post(base + "/rd/workspace", async (req, res) => {
+        const { idea } = z.object({ idea: z.string().regex(/^r:[0-9a-f-]{36}$/) }).strict().parse(req.body);
+        const sid = z.uuid().parse(req.params.id);
+        const { dir } = await workbench.rdWorkspace(sid, idea);
+        const i = workbench.ideas(sid).find((x) => x.target === idea);
+        res.json({ cwd: dir, title: i?.content.title ?? "" });
+      });
+      // Production feeds (reads are unjournaled GETs; changes go through the registry).
+      app.get(base + "/feeds", async (req, res) => {
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "feeds_list", {}));
+      });
+      app.get(base + "/feeds/rows", async (req, res) => {
+        const { id } = z.object({ id: z.string() }).strict().parse(req.query);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "feed_rows", { id }));
+      });
+      app.get(base + "/feeds/partitions", async (req, res) => {
+        const { id, limit } = z.object({ id: z.string(), limit: z.coerce.number().int().optional() }).strict().parse(req.query);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "feed_partitions", { id, ...(limit !== undefined ? { limit } : {}) }));
+      });
+      for (const [route, tool] of [["create", "feed_create"], ["update", "feed_update"], ["delete", "feed_delete"], ["service", "feeds_service_set"]] as const)
+        app.post(base + "/feeds/" + route, async (req, res) => {
+          res.json(await workbench.call(z.uuid().parse(req.params.id), tool, req.body));
+        });
+      // Send an idea to production (agents use production_commit too).
+      app.get(base + "/production/preview", async (req, res) => {
+        const { idea } = z.object({ idea: z.string().regex(/^r:[0-9a-f-]{36}$/) }).strict().parse(req.query);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "production_preview", { idea }));
+      });
+      app.post(base + "/production/commit", async (req, res) => {
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "production_commit", req.body));
+      });
+      // Revise an idea from a note (agents use idea_add_note too).
+      app.post(base + "/idea-note", async (req, res) => {
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "idea_add_note", req.body));
+      });
+      // Note ↔ idea links from the window (agents use note_link too).
+      app.post(base + "/note-links", async (req, res) => {
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "note_link", req.body));
       });
       // Library importance from the window (agents use source_importance too).
       app.post(base + "/source-importance", async (req, res) => {
@@ -93,13 +187,15 @@ export function nativeRoutes(
       app.get(base + "/view-context", (req, res) => {
         const sid = z.uuid().parse(req.params.id);
         store.get(sid);
-        const q = z.object({ active: z.string(), page: z.string(), idea: z.string(), open: z.string() }).strict().parse(req.query);
+        const q = z.object({ active: z.string(), page: z.string(), idea: z.string(), open: z.string(), focus: z.string().optional(), develop: z.string().optional() }).strict().parse(req.query);
         workbench.view.setContext(
           sid,
           viewContextSchema.parse({
             activeArtifact: q.active || null,
             page: Number(q.page) || undefined,
             ideaTarget: q.idea || null,
+            focusIdea: q.focus || null,
+            developIdea: q.develop || null,
             openArtifacts: q.open ? q.open.split(",") : [],
           }),
         );

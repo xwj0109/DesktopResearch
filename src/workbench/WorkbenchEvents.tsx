@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useResearch } from "./research";
-import { SOURCE_NAVIGATION, type ViewEvent } from "../workbench-contract";
+import { LITERATURE_FOCUS, RESEARCH_IDEA, SOURCE_NAVIGATION, type ViewEvent } from "../workbench-contract";
+import { developingIdea } from "./panes/ResearchDev";
 
 export const ACTIVE_IDEA = "ideas:active";
 /** Applies agent presentation events to this window and reports what it shows.
@@ -75,6 +76,12 @@ export function WorkbenchEvents({
           s.setDraft(ACTIVE_IDEA, e.target);
           reveal("idea");
           break;
+        case "focus-idea":
+          s.setDraft(LITERATURE_FOCUS, e.target ?? "");
+          break;
+        case "develop-idea":
+          s.setDraft(RESEARCH_IDEA, e.target ?? "");
+          break;
       }
     };
     void (async () => {
@@ -106,15 +113,17 @@ export function WorkbenchEvents({
     page = active ? (JSON.parse(scope.drafts[`artifact:${active}`] ?? "{}").page ?? 0) : 0;
   } catch {}
   const idea = scope.drafts[ACTIVE_IDEA] ?? "";
+  const focus = scope.drafts[LITERATURE_FOCUS] ?? "";
+  const develop = developingIdea(scope.view, scope.drafts)?.target ?? "";
   useEffect(() => {
     if (scope.portfolio) return;
     const timer = setTimeout(() => {
       void scope.client
-        .read(`/native/view-context?active=${active ?? ""}&page=${page || ""}&idea=${idea}&open=${open}`)
+        .read(`/native/view-context?active=${active ?? ""}&page=${page || ""}&idea=${idea}&open=${open}&focus=${focus}&develop=${develop}`)
         .catch(() => {});
     }, 300);
     return () => clearTimeout(timer);
-  }, [active, open, page, idea, scope.client, scope.portfolio]);
+  }, [active, open, page, idea, focus, develop, scope.client, scope.portfolio]);
   if (!notice) return null;
   return (
     <div className="agent-toast" role="status">

@@ -9,6 +9,9 @@ import { sessionKey, updateDraft } from "./model";
 import type { Material, MaterialTab, StageId, Thread, WorkbenchData } from "./model";
 import { NativeConversation, type RuntimeSummary } from "./NativeConversation";
 import { PiTerminal, pasteIntoTerminal } from "./PiTerminal";
+import { ChangesPane, DocumentsPane, FilesPane, ResearchIdeaBar, developingIdea } from "./panes/ResearchDev";
+import { DataSnapshotsPane } from "./panes/DataSnapshots";
+import { PRODUCTION_STAGES, ProductionBar } from "./panes/Production";
 import { EmptyPane, PreviewPane } from "./Materials";
 import { CommandPalette, type Command } from "./CommandPalette";
 import { ToolBlock } from "./transcript";
@@ -43,6 +46,7 @@ import { IdeaBoard } from "./panes/IdeaBoard";
 import { GraphPane } from "./panes/GraphPane";
 import { CodePane } from "./panes/CodePane";
 import { DataPane, PortfolioPane, ResultsPane, RunsPane } from "./panes/EvidencePanes";
+import { FeedExplorerPane, FeedQualityPane, FeedsPane } from "./panes/Feeds";
 import { useStageActivity } from "./useStageActivity";
 import {
   defaultTheme,
@@ -221,18 +225,6 @@ function ResearchPane({ kind, stage }: { kind: PaneKind; stage: string }) {
       return <SourcesPane initialMode={stage === "literature" ? "library" : undefined} />;
     case "idea":
       return <IdeaBoard />;
-    case "bibliography":
-      return (
-        <RecordEditor
-          kinds={["search-brief", "bibliography"]}
-          intro={
-            <p className="note">
-              Your bibliography order is the curated order: reorder entries with ↑↓. Inclusion
-              decisions and reasons are part of each entry.
-            </p>
-          }
-        />
-      );
     case "spec":
       return (
         <RecordEditor
@@ -248,6 +240,20 @@ function ResearchPane({ kind, stage }: { kind: PaneKind; stage: string }) {
           <ActionPanel commands={["approval.record", "handoff.create", "proposal.review"]} />
         </RecordEditor>
       );
+    case "files":
+      return <FilesPane />;
+    case "changes":
+      return <ChangesPane />;
+    case "documents":
+      return <DocumentsPane />;
+    case "snapshots":
+      return <DataSnapshotsPane />;
+    case "feeds":
+      return <FeedsPane />;
+    case "explorer":
+      return <FeedExplorerPane />;
+    case "quality":
+      return <FeedQualityPane />;
     case "data":
       return <DataPane />;
     case "graph":
@@ -334,6 +340,10 @@ export function Workbench({ data, native }: { data: WorkbenchData; native?: Nati
   const setLState = (next: LayoutState) => setLayouts((old) => ({ ...old, [layoutStage]: next }));
   const stagesAvailable = native?.kind !== "portfolio";
   const research = useResearchData(native?.client);
+  // The Pi conversation for this pane: the stage's, or in Research Development
+  // the developing idea's own (null until there is a pursued idea to develop).
+  const devIdea = stage === "research" && !portfolio ? developingIdea(research.view, researchDrafts) : null;
+  const conversationId = portfolio ? "portfolio" : stage === "research" ? (devIdea ? `research:${devIdea.target.slice(2)}` : null) : stage;
   const activity = useStageActivity(
     native?.client,
     native?.kind === "strategy" ? data.stages.map((s) => s.id) : [],
@@ -498,6 +508,18 @@ export function Workbench({ data, native }: { data: WorkbenchData; native?: Nati
     if (id !== stage || portfolio) previousStage.current = stage;
     setStage(id);
     setPortfolio(false);
+  };
+  /** Go to a stage and bring one of its panes forward (a pane handing work on). */
+  const showInStage = (id: StageId, pane?: string) => {
+    navigate(id);
+    if (!pane) return;
+    setLayouts((old) => {
+      const st = old[id] ?? {};
+      const lay = effectiveLayout(stageLayouts[id], st);
+      const slot = (["a", "b", "c"] as SlotId[]).find((s) => (lay[s] as string[] | undefined)?.includes(pane));
+      if (!slot) return old;
+      return { ...old, [id]: { ...st, hidden: (st.hidden ?? []).filter((s) => s !== slot), tabs: { ...st.tabs, [slot]: pane }, zoom: null } };
+    });
   };
   const openPortfolio = () => setPortfolio(true);
   const chooseTheme = (id: ThemeId) => {
@@ -802,11 +824,17 @@ export function Workbench({ data, native }: { data: WorkbenchData; native?: Nati
           ◨
         </button>
       </div>
-      {native?.client?.bridge.terminalOpen ? (
-        <div className="conversation-terminal" key={key}>
+      {native?.client?.bridge.terminalOpen && conversationId === null ? (
+        <div className="conversation-terminal rd-no-idea">
+          <p className="rd-empty">
+            Research Development works on one pursued idea at a time, each with its own workspace and Pi conversation. Choose an idea in the bar above, or mark one Pursue in Ideas.
+          </p>
+        </div>
+      ) : native?.client?.bridge.terminalOpen ? (
+        <div className="conversation-terminal" key={`${key}:${conversationId}`}>
           <PiTerminal
             bridge={native.client.bridge}
-            stage={portfolio ? "portfolio" : stage}
+            stage={conversationId!}
             theme={theme}
             onStatus={({ running }) => setRuntime({ connected: running, running: false, pending: 0, model: "Pi CLI" })}
           />
@@ -1127,20 +1155,35 @@ export function Workbench({ data, native }: { data: WorkbenchData; native?: Nati
             </div>
           </aside>
         )}
-        <StageLayout
-          key={layoutStage}
-          layout={layout}
-          defaults={defaults}
-          onSwap={swap}
-          state={lstate}
-          onState={setLState}
-          active={active}
-          onActive={(tile) => {
-            setActive(tile);
-          }}
-          render={renderPane}
-          tileLabel={(kind) => (kind === "pi" ? `~/${scopePath}` : paneLabels[kind].toLowerCase())}
-        />
+        {(() => {
+          const tiles = (
+            <StageLayout
+              key={layoutStage}
+              layout={layout}
+              defaults={defaults}
+              onSwap={swap}
+              state={lstate}
+              onState={setLState}
+              active={active}
+              onActive={(tile) => {
+                setActive(tile);
+              }}
+              render={renderPane}
+              tileLabel={(kind) => (kind === "pi" ? `~/${scopePath}` : paneLabels[kind].toLowerCase())}
+            />
+          );
+          // Research Development states which idea it develops; the production
+          // stages state which idea is in production.
+          const bar = portfolio || !native?.client ? null : stage === "research" ? <ResearchIdeaBar /> : PRODUCTION_STAGES.includes(stage) ? <ProductionBar /> : null;
+          return bar ? (
+            <div className="stage-col">
+              {bar}
+              {tiles}
+            </div>
+          ) : (
+            tiles
+          );
+        })()}
       </div>
       {palette !== null && (
         <CommandPalette commands={commands} initialQuery={palette} onClose={() => setPalette(null)} />
@@ -1161,19 +1204,22 @@ export function Workbench({ data, native }: { data: WorkbenchData; native?: Nati
         drafts: researchDrafts,
         setDraft: changeResearchDraft,
         setComposer: (text) => {
-          if (pasteIntoTerminal(portfolio ? "portfolio" : stage, text)) return;
+          if (conversationId && pasteIntoTerminal(conversationId, text)) return;
           changeDraft(text);
           focusComposer();
         },
         appendComposer: (text) => {
           // With the real Pi CLI in the pane, "Ask Pi" types into it.
-          if (pasteIntoTerminal(portfolio ? "portfolio" : stage, text)) return;
+          if (conversationId && pasteIntoTerminal(conversationId, text)) return;
           const current = (snapshot.current.drafts as Record<string, string>)[key] ?? "";
           changeDraft(appendReviewMessage(current, text));
           focusComposer();
         },
         companion,
         setCompanion,
+        goToStage: (id, pane) => {
+          if (stageLayouts[id as StageId] && id !== "portfolio") showInStage(id as StageId, pane);
+        },
       }}
     >
       {shell}

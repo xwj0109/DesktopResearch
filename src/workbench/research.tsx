@@ -56,6 +56,8 @@ export interface ResearchScope {
   appendComposer: (text: string) => void;
   companion: Companion;
   setCompanion: (next: Companion) => void;
+  /** Hand work to another stage: go there and bring one of its panes forward. */
+  goToStage?: (stage: string, pane?: string) => void;
 }
 const Ctx = createContext<ResearchScope | null>(null);
 export const ResearchProvider = ({

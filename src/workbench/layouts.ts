@@ -5,8 +5,14 @@ export type PaneKind =
   | "pi"
   | "sources"
   | "idea"
-  | "bibliography"
   | "spec"
+  | "files"
+  | "changes"
+  | "documents"
+  | "snapshots"
+  | "feeds"
+  | "explorer"
+  | "quality"
   | "data"
   | "graph"
   | "code"
@@ -21,9 +27,15 @@ export const paneLabels: Record<PaneKind, string> = {
   pi: "Pi",
   sources: "Sources",
   idea: "Idea",
-  bibliography: "Bibliography",
   spec: "Research spec",
-  data: "Data",
+  files: "Files",
+  changes: "Changes",
+  documents: "Documents",
+  snapshots: "Data",
+  feeds: "Feeds",
+  explorer: "Explorer",
+  quality: "Quality",
+  data: "Contract",
   graph: "Graph",
   code: "Code",
   runs: "Experiments",
@@ -35,9 +47,15 @@ export const paneGlyphs: Record<PaneKind, string> = {
   pi: "❯",
   sources: "▤",
   idea: "✦",
-  bibliography: "≣",
   spec: "§",
-  data: "▦",
+  files: "▭",
+  changes: "±",
+  documents: "▤",
+  snapshots: "▦",
+  feeds: "≋",
+  explorer: "▦",
+  quality: "✓",
+  data: "§",
   graph: "◇",
   code: "λ",
   runs: "▶",
@@ -59,9 +77,11 @@ export interface StageLayout {
  * arrangement — Pi upper left, graph lower left, code right — is fixed. */
 export const stageLayouts: Record<LayoutStage, StageLayout> = {
   ideas: { a: ["pi"], c: ["sources", "idea"], split: 0.46, stack: 0.6 },
-  literature: { a: ["pi"], c: ["sources", "bibliography"], split: 0.44, stack: 0.6 },
-  research: { a: ["pi"], b: ["sources"], c: ["spec"], split: 0.44, stack: 0.56 },
-  data: { a: ["pi"], c: ["data"], split: 0.44, stack: 0.6 },
+  literature: { a: ["pi"], c: ["sources"], split: 0.44, stack: 0.6 },
+  // One workspace per pursued idea: its Pi on the left, its work on the right.
+  research: { a: ["pi"], c: ["files", "changes", "documents", "snapshots", "spec", "sources"], split: 0.4, stack: 0.6 },
+  // Production data for the idea in production: live feeds, what they hold, their quality, the contract.
+  data: { a: ["pi"], c: ["feeds", "explorer", "quality", "data"], split: 0.4, stack: 0.6 },
   code: { a: ["pi"], b: ["graph"], c: ["code"], split: 0.42, stack: 0.56 },
   backtests: { a: ["pi"], c: ["runs"], split: 0.42, stack: 0.6 },
   results: { a: ["pi"], c: ["results", "conclusion"], split: 0.4, stack: 0.6 },
@@ -120,8 +140,14 @@ export const paneBlurbs: Record<PaneKind, string> = {
   pi: "Scoped Pi conversation for this stage.",
   sources: "Read papers, anchor comments to passages and freeze multi-paper review batches.",
   idea: "Hypothesis record: rationale, universe, horizon, falsification and evidence.",
-  bibliography: "Search brief and the curated bibliography, in your order, with inclusion decisions.",
   spec: "The editable research specification: question, assumptions, rules, validation and acceptance.",
+  files: "The idea's workspace folder: code, scripts and data, with a viewer.",
+  changes: "What changed since the last checkpoint, recording checkpoints, and their history.",
+  documents: "Reports, figures, tables, PDFs and notebooks produced in the workspace.",
+  snapshots: "Frozen data snapshots every idea reads from data/: fetch public market data, register your own files, preview.",
+  feeds: "Production feeds collected by the background service: live exchange streams, scheduled pulls and your own scripts, with the on/off switch.",
+  explorer: "A production feed's latest rows, its main series and how to read its partitions in polars.",
+  quality: "Frozen partitions per feed: rows, gaps, duplicates, out-of-order, missing bars, late rows and SHA-256.",
   data: "Data contracts, handoffs, feasibility findings and bounded dataset samples.",
   graph: "Component graph with stable identities, interfaces, assumptions and linked code.",
   code: "Editor over versioned source with diffs. Nothing executes here.",

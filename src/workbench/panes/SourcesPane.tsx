@@ -1,17 +1,115 @@
 import { ReviewPane } from "./ReviewPane";
-import type { SourceNavigation } from "../../workbench-contract";
+import { LITERATURE_FOCUS, type SourceNavigation } from "../../workbench-contract";
+import { ACTIVE_IDEA } from "../WorkbenchEvents";
 import { useEffect, useRef, useState } from "react";
 import type { PaperHitDTO } from "../../../desktop/contracts";
 import type { Annotation, Artifact, Batch } from "../../shared";
-import { NativeDocument } from "../NativeDocument";
+import { NativeDocument, type NoteIdeaLink } from "../NativeDocument";
 import { PaneLoading, useAction, useResearch } from "../research";
 import { formatTime } from "../transcript";
 import { SourceQuickLook } from "../SourceQuickLook";
+import type { IdeaCoverage } from "../../idea-coverage";
 import { importanceLabels, sections as SECTIONS, type Importance, type Section as Level } from "../../source-importance-contract";
 
 const kindGlyph = (a?: Artifact) =>
   a?.kind === "pdf" ? "▤" : a?.kind === "image" ? "▧" : a?.kind === "text" ? "≡" : "□";
 type Mode = "read" | "library" | "review";
+/** A pursued idea as the window receives it (ideas_pursued without content). */
+interface PursuedIdea {
+  target: string;
+  title: string;
+  version: number;
+  pursuedOnVersion: number | null;
+  reason: string;
+  pendingEdits: boolean;
+  ranks: Record<string, Level>;
+  coverage?: IdeaCoverage;
+}
+const count = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+/** "8 papers · 3 notes: 2 supports, 1 contradicts" (zero stances left out). */
+function coverageSummary(c: IdeaCoverage) {
+  const n = c.notes;
+  const stances = (["supports", "contradicts", "refines"] as const).filter((s) => n[s]).map((s) => `${n[s]} ${s}`);
+  if (n.unclassified) stances.push(`${n.unclassified} unjudged`);
+  return `${count(c.papers.primary + c.papers.secondary, "paper")} · ${count(n.total, "note")}${stances.length ? `: ${stances.join(", ")}` : ""}`;
+}
+/** Linked notes by stance as one thin bar (empty when there is no evidence yet). */
+function EvidenceBar({ c }: { c: IdeaCoverage }) {
+  const n = c.notes;
+  return (
+    <span className={`ev-bar ${n.total ? "" : "ev-none"}`} aria-hidden="true">
+      {(["supports", "contradicts", "refines", "unclassified"] as const).map((s) =>
+        n[s] ? <i key={s} className={`ev-${s}`} style={{ flexGrow: n[s] }} /> : null,
+      )}
+    </span>
+  );
+}
+/** Literature's focus: tabs for "All ideas" and each pursued idea; the focused
+ * idea (or each idea, in the overview) shows its evidence and one next step. */
+function FocusBar({ pursued, focus, onFocus, compact }: { pursued: PursuedIdea[]; focus: PursuedIdea | null; onFocus: (target: string) => void; compact?: boolean }) {
+  const since = (p: PursuedIdea) => (p.pursuedOnVersion && p.pursuedOnVersion !== p.version ? ` · pursued since v${p.pursuedOnVersion}` : "");
+  return (
+    <section className={`lit-focus ${compact ? "compact" : ""}`} aria-label="Literature focus">
+      <div className="lit-tabs" role="tablist" aria-label="Literature focus idea">
+        <button role="tab" aria-selected={!focus} className={!focus ? "on" : ""} onClick={() => onFocus("")}>
+          All ideas <sup>{pursued.length}</sup>
+        </button>
+        {pursued.map((p) => (
+          <button
+            key={p.target}
+            role="tab"
+            aria-selected={focus?.target === p.target}
+            className={focus?.target === p.target ? "on" : ""}
+            title={`${p.title || "Untitled idea"} · v${p.version}`}
+            onClick={() => onFocus(p.target)}
+          >
+            {p.title || "Untitled idea"}
+          </button>
+        ))}
+      </div>
+      {compact ? null : focus ? (
+        <div className="lit-idea-card">
+          <p className="meta">
+            v{focus.version}
+            {since(focus)}
+            {focus.pendingEdits ? " · unsaved edits" : ""}
+            <span className="why" title={focus.reason}> · “{focus.reason}”</span>
+          </p>
+          {focus.coverage && (
+            <>
+              <div className="ev">
+                <EvidenceBar c={focus.coverage} />
+                <span>{coverageSummary(focus.coverage)}</span>
+              </div>
+              {focus.coverage.next && <p className="next">Next: {focus.coverage.next}</p>}
+            </>
+          )}
+        </div>
+      ) : pursued.length ? (
+        <div className="lit-ideas" role="list" aria-label="Pursued ideas">
+          {pursued.map((p) => (
+            <button key={p.target} role="listitem" className="lit-idea-row" onClick={() => onFocus(p.target)} title="Focus Literature on this idea">
+              <span className="t">{p.title || "Untitled idea"}</span>
+              <span className="v">
+                v{p.version}
+                {p.pendingEdits ? " · edits" : ""}
+              </span>
+              {p.coverage && (
+                <span className="ev">
+                  <EvidenceBar c={p.coverage} />
+                  <span>{coverageSummary(p.coverage)}</span>
+                  {p.coverage.next && <span className="next">{p.coverage.next}</span>}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="lit-empty">No pursued ideas yet. Mark ideas Pursue in the Ideas stage to work on them here.</p>
+      )}
+    </section>
+  );
+}
 /** Keys that move the selected source: 1 primary, 2 secondary, 3 (or 0) other. */
 const LEVEL_KEYS: Record<string, Level> = { "1": "primary", "2": "secondary", "3": "other", "0": "other" };
 const DRAG_TYPE = "application/x-pi-research-source";
@@ -283,7 +381,29 @@ export function SourcesPane({ initialMode }: { initialMode?: Mode }) {
     setMode("read");
   };
   const saved: Record<string, Importance> = view.importance ?? {};
-  const levelOf = (id: string): Level => rating[id] ?? saved[id] ?? "other";
+  // Literature works on one pursued idea at a time: its ranks replace the
+  // library-wide sections while it is the focus (see docs/RESEARCH-FLOW.md).
+  const pursued: PursuedIdea[] = scope.stage === "literature" ? (view.pursued ?? []) : [];
+  const focus = pursued.find((p) => p.target === scope.drafts[LITERATURE_FOCUS]) ?? null;
+  const setFocus = (target: string) => {
+    setCollapsed(new Set());
+    scope.setDraft(LITERATURE_FOCUS, target);
+  };
+  const rated = (id: string) => rating[`${focus?.target ?? ""}|${id}`];
+  /** A note's idea links with titles and current versions (for the reader). */
+  const linksOf = (noteId: string): NoteIdeaLink[] =>
+    Object.entries((view.noteLinks ?? {})[noteId] ?? {}).map(([ideaId, l]: [string, any]) => {
+      const p = ((view.pursued ?? []) as PursuedIdea[]).find((x) => x.target === `r:${ideaId}`);
+      const versions = (view.science?.state?.versions ?? []).filter((v: any) => v.kind === "idea" && v.id === ideaId);
+      return {
+        ideaId,
+        title: p?.title ?? view.ideaTitles?.[ideaId] ?? "Idea",
+        stance: l.stance,
+        onVersion: l.version,
+        currentVersion: p?.version ?? (versions.length ? Math.max(...versions.map((v: any) => v.version)) : null),
+      };
+    });
+  const levelOf = (id: string): Level => rated(id) ?? (focus ? focus.ranks[id] : saved[id]) ?? "other";
   const { sections, visible } = librarySections(artifacts, levelOf, collapsed);
   const grouped = artifacts.some((a) => levelOf(a.id) !== "other") || !!dragging;
   const reveal = (id: string) =>
@@ -300,19 +420,20 @@ export function SourcesPane({ initialMode }: { initialMode?: Mode }) {
   /** Same operation agents use (source_importance); the row moves at once. */
   const rate = (id: string, level: Level) => {
     if (levelOf(id) === level) return;
-    setRating((r) => ({ ...r, [id]: level }));
+    const key = `${focus?.target ?? ""}|${id}`;
+    setRating((r) => ({ ...r, [key]: level }));
     // The row stays selected in its new section, which must be open.
     setCollapsed((c) => (c.has(level) ? new Set([...c].filter((x) => x !== level)) : c));
     reveal(id);
     scope.client
-      .write("/native/source-importance", { artifactId: id, importance: level })
+      .write("/native/source-importance", { artifactId: id, importance: level, ...(focus ? { idea: focus.target } : {}) })
       .then(
         () => scope.refresh().catch(() => {}),
         (e: unknown) => upload.setError(`Section not saved: ${reason(e)}`),
       )
       .finally(() =>
         setRating((r) => {
-          const { [id]: _, ...rest } = r;
+          const { [key]: _, ...rest } = r;
           return rest;
         }),
       );
@@ -383,7 +504,7 @@ export function SourcesPane({ initialMode }: { initialMode?: Mode }) {
   /** Import files one by one against the latest revision; identical bytes
    * already in the library are opened instead of duplicated. `section` places
    * newly imported sources (existing ones keep theirs). */
-  const ingest = async (items: { name: string; bytes: Uint8Array | ArrayBuffer; label?: string }[], section?: Importance) => {
+  const ingest = async (items: { name: string; bytes: Uint8Array | ArrayBuffer; label?: string }[], section?: Importance, idea?: string) => {
     const done: string[] = [],
       skipped: string[] = [],
       unplaced: string[] = [];
@@ -405,7 +526,9 @@ export function SourcesPane({ initialMode }: { initialMode?: Mode }) {
       done.push(item.name);
       // The import stands even if placing it fails; say so instead.
       if (added && section)
-        await scope.client.write("/native/source-importance", { artifactId: added, importance: section }).catch(() => unplaced.push(item.name));
+        await scope.client
+          .write("/native/source-importance", { artifactId: added, importance: section, ...(idea ? { idea } : {}) })
+          .catch(() => unplaced.push(item.name));
     }
     if (last) openArtifact(last);
     return [
@@ -440,8 +563,9 @@ export function SourcesPane({ initialMode }: { initialMode?: Mode }) {
             failed.push(`${part} — ${reason(e)}`);
           }
         }
-        // Papers you pick from arXiv yourself start as primary sources.
-        const summary = fetched.length ? await ingest(fetched, "primary") : "";
+        // Papers you pick from arXiv yourself start as primary sources (for the
+        // focus idea in Literature, else library-wide).
+        const summary = fetched.length ? await ingest(fetched, "primary", focus?.target) : "";
         setRefs(failed.length ? failed.map((f) => f.split(" — ")[0]).join(" ") : "");
         if (failed.length) upload.setError(`Not added: ${failed.join(" · ")}`);
         return summary;
@@ -687,6 +811,8 @@ export function SourcesPane({ initialMode }: { initialMode?: Mode }) {
       <div className={`pane-body ${mode === "read" ? "source-reading" : ""}`}>
         {mode === "read" && activeArtifact && (
           <div className="doc-host" data-sources-reader={readerId}>
+            {/* The focus idea stays visible while reading (notes link to it). */}
+            {scope.stage === "literature" && <FocusBar compact pursued={pursued} focus={focus} onFocus={setFocus} />}
             {annotate.notices}
             <NativeDocument
               key={active!}
@@ -711,8 +837,18 @@ export function SourcesPane({ initialMode }: { initialMode?: Mode }) {
               onAnnotate={async (annotation) => {
                 const saved = await annotate.run(async () => {
                   const latest = await scope.client.read("/native/research");
-                  await scope.client.write("/annotations", { revision: latest.revision, annotation });
-                }, "Saved to notes, anchored to this immutable source.");
+                  const result = await scope.client.write("/annotations", { revision: latest.revision, annotation });
+                  // A new note made while Literature focuses an idea is linked to it
+                  // (stance to be judged). Linking is separate: the note stands either way.
+                  if (focus && !(annotation as { id?: string }).id) {
+                    const before = new Set(((latest.annotations ?? []) as Annotation[]).map((n) => n.id));
+                    const created = ((result?.annotations ?? []) as Annotation[]).find((n) => !before.has(n.id));
+                    if (created)
+                      await scope.client
+                        .write("/native/note-links", { noteId: created.id, idea: focus.target, stance: "unclassified" })
+                        .catch(() => {});
+                  }
+                }, focus && !(annotation as { id?: string }).id ? `Saved to notes and linked to “${focus.title}”.` : "Saved to notes, anchored to this immutable source.");
                 if (!saved) throw new Error("Annotation not saved. Your comment has been retained.");
               }}
               onAsk={(text) => scope.appendComposer(text)}
@@ -735,6 +871,24 @@ export function SourcesPane({ initialMode }: { initialMode?: Mode }) {
                 return result.annotation;
               }}
               onBack={backToLibrary}
+              linksOf={linksOf}
+              focusIdea={focus ? { id: focus.target.slice(2), title: focus.title, version: focus.version } : null}
+              onReviseIdea={(noteId) => {
+                if (!focus) return;
+                void annotate.run(async () => {
+                  // One registry operation (agents use idea_add_note); the window
+                  // then takes you to the idea itself.
+                  await scope.client.write("/native/idea-note", { noteId, idea: focus.target, show: false });
+                  scope.setDraft(ACTIVE_IDEA, focus.target);
+                  scope.goToStage?.("ideas", "idea");
+                }, `Added to “${focus.title}” as an unsaved revision.`);
+              }}
+              onLink={(noteId, stance) => {
+                if (!focus) return;
+                void annotate.run(async () => {
+                  await scope.client.write("/native/note-links", { noteId, idea: focus.target, stance });
+                }, "");
+              }}
               reviewPicked={picked}
               onTogglePick={(id) => setPicked((old) => (old.includes(id) ? old.filter((x) => x !== id) : [...old, id]))}
             />
@@ -758,6 +912,9 @@ export function SourcesPane({ initialMode }: { initialMode?: Mode }) {
                   ×
                 </button>
               </div>
+            )}
+            {scope.stage === "literature" && (
+              <FocusBar pursued={pursued} focus={focus} onFocus={setFocus} />
             )}
             <section className="block">
               <header className="source-library-header">

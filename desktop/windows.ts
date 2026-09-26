@@ -259,13 +259,22 @@ export class Windows {
       ideas: "Ideas", literature: "Literature", research: "Research Development", data: "Data",
       code: "Design & Code", backtests: "Backtests", results: "Results", portfolio: "Portfolio",
     };
-    const terminalRequest = z.object({ stage: z.enum([...stageIds, "portfolio"]), cols: z.number().int().min(20).max(500), rows: z.number().int().min(5).max(300) }).strict();
-    const backendJson = async (o: Owned, method: "GET" | "POST", tail: string) => {
+    // A conversation is a stage, or one idea's Research Development ("research:<idea id>").
+    const conversation = z.union([z.enum([...stageIds, "portfolio"]), z.string().regex(/^research:[0-9a-f-]{36}$/)]);
+    const terminalRequest = z.object({ stage: conversation, cols: z.number().int().min(20).max(500), rows: z.number().int().min(5).max(300) }).strict();
+    const ideaOf = (stage: string) => (stage.startsWith("research:") ? stage.slice("research:".length) : null);
+    /** Where a conversation's Pi runs: the strategy folder, or the idea's workspace
+     * (same location the backend creates: <strategy>/Research-Workspaces/<idea id>). */
+    const cwdOf = (scope: { kind: "strategy" | "portfolio"; id: string }, stage: string) => {
+      const idea = ideaOf(stage);
+      return idea ? path.join(scopeFolder(this.config.root, scope), "Research-Workspaces", idea) : scopeFolder(this.config.root, scope);
+    };
+    const backendJson = async (o: Owned, method: "GET" | "POST", tail: string, body: unknown = {}) => {
       const scope = o.scope as { kind: "strategy" | "portfolio"; id: string };
       const response = await fetch(`${this.backend.origin}/api/${scope.kind === "strategy" ? "strategies" : "portfolios"}/${scope.id}${tail}`, {
         method,
         headers: { Authorization: `Bearer ${o.capability}`, Origin: this.backend.origin, ...(method === "POST" ? { "content-type": "application/json" } : {}) },
-        ...(method === "POST" ? { body: "{}" } : {}),
+        ...(method === "POST" ? { body: JSON.stringify(body) } : {}),
         redirect: "error",
         signal: AbortSignal.timeout(10000),
       });
@@ -280,18 +289,29 @@ export class Windows {
       const key = `${scopeKey(scope)}:${stage}`;
       if (restart) this.terminals.close(key);
       const name = String((await backendJson(o, "GET", "").catch(() => ({})))?.name ?? "Pi Research");
-      const label = `${name} · ${stageLabels[stage]}`;
+      const idea = ideaOf(stage);
+      // An idea's workspace is created (folder + repository) by the backend before Pi starts there.
+      const workspace = idea ? await backendJson(o, "POST", "/native/rd/workspace", { idea: `r:${idea}` }) : null;
+      const label = idea ? `${name} · RD · ${String(workspace?.title || "idea").slice(0, 80)}` : `${name} · ${stageLabels[stage]}`;
       const opened = await this.terminals.open(
         {
           key,
           label,
-          cwd: scopeFolder(this.config.root, scope),
+          cwd: cwdOf(scope, stage),
           sessionId: stageSessionId(scope.id, stage),
           send: (type, payload) => {
             if (o.window.isDestroyed()) return;
             o.window.webContents.send(channels.terminalEvent, type === "output" ? { stage, type, data: payload } : { stage, type, code: payload });
           },
-          ...(scope.kind === "strategy" ? { tools: () => backendJson(o, "POST", "/native/agent-tools") } : {}),
+          // The stage in the tools URL gives this conversation its stage guidance.
+          ...(scope.kind === "strategy"
+            ? {
+                tools: async () => {
+                  const t = await backendJson(o, "POST", "/native/agent-tools");
+                  return { ...t, url: `${t.url}?stage=${idea ? "research" : stage}${idea ? `&idea=r:${idea}` : ""}` };
+                },
+              }
+            : {}),
         },
         cols,
         rows,
@@ -300,13 +320,13 @@ export class Windows {
     };
     const stageOf = (o: Owned, input: unknown, extra: z.ZodRawShape = {}) => {
       if (o.scope.kind === "launcher") throw new Error("No conversation in this window");
-      const value = z.object({ stage: z.enum([...stageIds, "portfolio"]), ...extra }).strict().parse(input) as { stage: string; since?: number };
+      const value = z.object({ stage: conversation, ...extra }).strict().parse(input) as { stage: string; since?: number };
       if ((o.scope.kind === "portfolio") !== (value.stage === "portfolio")) throw new Error("Conversation outside scope");
       return { scope: o.scope, ...value, key: `${scopeKey(o.scope)}:${value.stage}` };
     };
     handle(channels.terminalTranscript, (o, input) => {
       const { scope, stage, since, key } = stageOf(o, input, { since: z.number().int().min(0) });
-      const read = readSession(sessionFile(scopeFolder(this.config.root, scope), stageSessionId(scope.id, stage)), since ?? 0);
+      const read = readSession(sessionFile(cwdOf(scope, stage), stageSessionId(scope.id, stage)), since ?? 0);
       return { text: read.text, offset: read.offset, reset: read.reset, file: read.file, running: this.terminals.running(key) };
     });
     handle(channels.terminalHandoff, async (o, input) => {
@@ -314,8 +334,8 @@ export class Windows {
       const name = String((await backendJson(o, "GET", "").catch(() => ({})))?.name ?? "Pi Research");
       const script = this.terminals.handoff({
         key,
-        label: `${name} · ${stageLabels[stage]}`,
-        cwd: scopeFolder(this.config.root, scope),
+        label: ideaOf(stage) ? `${name} · RD` : `${name} · ${stageLabels[stage]}`,
+        cwd: cwdOf(scope, stage),
         sessionId: stageSessionId(scope.id, stage),
         send: () => {},
       });
@@ -329,7 +349,7 @@ export class Windows {
       try {
         const o = this.sender(event);
         if (o.scope.kind === "launcher") return;
-        const { stage, data } = z.object({ stage: z.enum([...stageIds, "portfolio"]), data: z.string().max(65536) }).strict().parse(input);
+        const { stage, data } = z.object({ stage: conversation, data: z.string().max(65536) }).strict().parse(input);
         this.terminals.input(`${scopeKey(o.scope)}:${stage}`, data);
       } catch {}
     });
@@ -561,6 +581,13 @@ export class Windows {
     });
     window.on("move", () => this.persist());
     window.on("resize", () => this.persist());
+    const fullScreen = () => {
+      if (!window.isDestroyed()) window.webContents.send(channels.fullScreen, window.isFullScreen());
+    };
+    window.on("enter-full-screen", fullScreen);
+    window.on("leave-full-screen", fullScreen);
+    // A reload starts without the attribute; restate it.
+    window.webContents.on("did-finish-load", fullScreen);
     try {
       this.config.diagnose?.("window-created");
       await window.loadURL("pi-research://app" + scopePath(scope));

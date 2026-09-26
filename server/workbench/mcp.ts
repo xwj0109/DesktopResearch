@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { Store } from "../store.ts";
-import { WORKBENCH_INSTRUCTIONS, type Workbench } from "./tools.ts";
+import { STAGE_GUIDANCE, WORKBENCH_INSTRUCTIONS, type Workbench } from "./tools.ts";
 
 /** MCP adapter over the workbench registry (JSON-RPC 2.0, Streamable HTTP in
  * JSON-response mode, no SSE). Any MCP client (Claude Code, Codex, Cursor, …)
@@ -93,14 +93,21 @@ export class McpAccess {
   }
 }
 
+/** "This conversation develops …" for a Research Development Pi (its idea from the URL). */
+function ideaLine(wb: Workbench, sid: string, idea?: string) {
+  if (!idea) return "";
+  const i = wb.ideas(sid).find((x) => x.target === idea);
+  return i ? ` The idea this conversation develops is “${i.content.title}” (${idea}, v${i.version}); rd_* tools default to its workspace when the window shows it.` : "";
+}
 type Message = { jsonrpc?: string; id?: string | number | null; method?: string; params?: any };
 const reply = (id: Message["id"], result: unknown) => ({ jsonrpc: "2.0", id, result });
 const failure = (id: Message["id"], code: number, message: string) => ({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
 
-/** Handle one JSON-RPC message or batch. Returns undefined for notifications. */
-export async function mcpHandle(wb: Workbench, sid: string, body: unknown): Promise<unknown> {
+/** Handle one JSON-RPC message or batch. Returns undefined for notifications.
+ * `stage` (from the connection URL) adds that stage's role to the instructions. */
+export async function mcpHandle(wb: Workbench, sid: string, body: unknown, stage?: keyof typeof STAGE_GUIDANCE, idea?: string): Promise<unknown> {
   if (Array.isArray(body)) {
-    const out = (await Promise.all(body.map((m) => mcpHandle(wb, sid, m)))).filter((x) => x !== undefined);
+    const out = (await Promise.all(body.map((m) => mcpHandle(wb, sid, m, stage, idea)))).filter((x) => x !== undefined);
     return out.length ? out : undefined;
   }
   const m = (body ?? {}) as Message;
@@ -114,7 +121,7 @@ export async function mcpHandle(wb: Workbench, sid: string, body: unknown): Prom
           protocolVersion: PROTOCOLS.includes(asked) ? asked : PROTOCOLS[0],
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "pi-research", title: "Pi Research workbench", version: "0.1.0" },
-          instructions: `${WORKBENCH_INSTRUCTIONS} Strategy: ${wb.store.get(sid).name}.`,
+          instructions: `${WORKBENCH_INSTRUCTIONS} Strategy: ${wb.store.get(sid).name}.${stage ? ` ${STAGE_GUIDANCE[stage]}` : ""}${ideaLine(wb, sid, idea)}`,
         });
       }
       case "ping":

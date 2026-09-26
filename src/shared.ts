@@ -118,6 +118,12 @@ export interface Strategy {
   ideas?: import("./idea-board-contract").IdeaBoardState;
   /** Importance by source id (unrated sources are absent). */
   importance?: Record<string, import("./source-importance-contract").Importance>;
+  /** Per-idea ranks by saved idea id, then source id (Literature's focus idea). */
+  ideaImportance?: Record<string, Record<string, import("./source-importance-contract").Section>>;
+  /** Notes linked to ideas, by note id then saved idea id. */
+  noteLinks?: Record<string, Record<string, import("./note-link-contract").NoteLink>>;
+  /** The idea sent to production (and earlier commits). */
+  production?: import("./production-contract").Production;
 }
 export interface DeletedSource {
   artifact: Artifact;

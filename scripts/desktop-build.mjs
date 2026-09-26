@@ -47,6 +47,8 @@ await build({
 });
 // Bundle the editor PTY glue and the exact native payload for this desktop target.
 await build({ ...common, entryPoints: [path.join(root, "node_modules/node-pty/lib/index.js")], outfile: path.join(out, "backend/pty.cjs"), format: "cjs" });
+// The background feed service (production data), run by launchd or as a child of the backend.
+await build({ ...common, entryPoints: [path.join(root, "server/feeds/daemon.ts")], outfile: path.join(out, "backend/feeds-daemon.mjs"), format: "esm", banner });
 const ptyTarget = `${process.platform}-${process.arch}`;
 const ptyDirectory = path.join(out, "backend/prebuilds", ptyTarget);
 await fs.mkdir(ptyDirectory, { recursive: true });

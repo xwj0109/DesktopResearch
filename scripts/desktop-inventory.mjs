@@ -11,6 +11,7 @@ export const fixedPayload = [
   "desktop/main.mjs",
   "desktop/preload.cjs",
   "backend/desktop-entry.mjs",
+  "backend/feeds-daemon.mjs",
   "backend/pi-host.mjs",
   "backend/pi-host-ui.mjs",
   "backend/pi-host-resources.mjs",

@@ -1,6 +1,7 @@
 import { strategyRenameSchema, strategyDeleteSchema } from "../../src/strategy-management-contract.ts";
 import { reviewPrepareSchema, reviewDuplicateSchema, reviewIdeaSchema, reviewReferenceSchema, reviewDeleteSchema } from "../../src/review-contract.ts";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { z } from "zod";
 import type { Store } from "../store.ts";
 import { hash as sha256 } from "../store.ts";
@@ -14,6 +15,7 @@ import {
   type IdeaBoardOp,
   type IdeaDraftContent,
   type IdeaBoardState,
+  ideaStatus,
 } from "../../src/idea-board-contract.ts";
 import {
   createPaperSearch,
@@ -22,8 +24,18 @@ import {
   parsePaperSource,
   type PaperDeps,
 } from "../../desktop/papers.ts";
-import { sourceImportanceSchema } from "../../src/source-importance-contract.ts";
+import { ideaRanks, sourceImportanceSchema } from "../../src/source-importance-contract.ts";
+import { ideaAddNoteSchema, noteLinkInputSchema, stances, type Stance } from "../../src/note-link-contract.ts";
+import { ideaCoverage } from "../../src/idea-coverage.ts";
+import { stageIds } from "../../desktop/contracts.ts";
 import { PdfText } from "./pdf-text.ts";
+import { RdWorkspaces } from "./rd.ts";
+import { productionCommitInputSchema, type ProductionCommit } from "../../src/production-contract.ts";
+import { feedCreateSchema, feedCreateToolSchema, feedDeleteSchema, feedServiceSchema, feedUpdateSchema } from "../../src/feed-contract.ts";
+import { FeedCatalog } from "../feeds/catalog.ts";
+import { FeedService } from "../feeds/service.ts";
+import { DataFeeds, INTERVALS, type FetchSource } from "./data.ts";
+import { MARKETS } from "./binance-archive.ts";
 import { ViewChannel } from "./view-channel.ts";
 
 /** One registry of workbench operations, owned by the backend.
@@ -57,6 +69,23 @@ export interface ToolManifest {
   annotations: { readOnlyHint: boolean; destructiveHint: boolean };
 }
 
+/** What each research stage's conversation is for. Given to the agent of that
+ * stage (MCP instructions, which Pi receives as prompt guidelines), so every
+ * runtime learns its role from the same text. */
+export const STAGE_GUIDANCE: Record<(typeof stageIds)[number], string> = {
+  ideas: "This conversation is the Ideas stage: brainstorm and refine idea drafts with the user, and save or decide on ideas when asked.",
+  literature:
+    "This conversation is the Literature stage. It works on the ideas the user decided to pursue: start from ideas_pursued (each idea at its latest saved version, with the decision reason and the sources it already cites). The window works on one focus idea at a time (ideas_pursued.focus; change it with literature_focus when asked): unless the user says otherwise, \"find papers\", ranking (source_importance with idea) and comments are about the focus idea, or about every pursued idea when there is no focus. For those ideas, find and import relevant papers when asked, read them, highlight and comment on the passages that support, contradict or refine each idea, and say which idea each finding bears on. Treat ideas not marked pursue as out of scope unless the user brings them in. When a passage bears on an idea, create the note with its stance (note_create with stance, or note_link): supports, contradicts or refines; idea_notes shows the evidence gathered for an idea so far. When a finding should change an idea, offer idea_add_note: it adds the note to the idea as an unsaved revision for the user to edit and save. Each pursued idea's coverage lists its gaps: use them to suggest what to read or look for next, especially evidence that could contradict an idea, and re-judge notes made on an earlier version.",
+  research:
+    "This conversation is the Research Development stage for one pursued idea, and your working directory is that idea's own workspace (a git repository the app checkpoints). Develop the research with the user: write and run exploratory scripts and code with your own tools, produce documents there (markdown reports, figures, CSV tables, PDFs), and shape the research specification. Keep work for this idea in this folder. The user sees the files, the changes since the last checkpoint and the documents in the right-hand panes; record a checkpoint (rd_checkpoint, with a short message) when the user asks or offers one at meaningful points. Use idea_get or ideas_pursued for the idea itself and idea_notes for its literature evidence. Real data: the strategy's frozen snapshots are in data/ (read-only Parquet; data_snapshots lists them with their columns). Process them with polars, lazily for tick data (pl.scan_parquet on a snapshot folder, filter and aggregate before collect), rather than loading everything into memory. When the user asks for data, fetch it with data_fetch: tick-level trades, aggregated trades, 1s bars, order-book depth, best bid/ask, open interest, funding and option summaries from the Binance archive (spot, USDⓈ-M, COIN-M, options; data_estimate first for big ranges), or bars from Binance, Coinbase and FRED series; watch data_jobs; for other sources, such as Bloomberg or files the user has, write the file with the user's own code in the workspace and register it with data_register (with a note on its source). Never modify files in data/; derive new files in the workspace instead.",
+  data:
+    "This conversation is the Data stage, the first production stage. It works on the idea sent to production (production_status: its exact version, workspace checkpoint and the snapshots its research used) and builds production data for it: live and scheduled feeds, their contracts and quality checks. Production data is live and continuously updated, not exploratory; be precise about schemas, units, timing, latency and gaps.",
+  code: "This conversation is the Design & Code stage: design and implement the strategy code.",
+  backtests: "This conversation is the Backtests stage: plan and run experiments with exact inputs.",
+  results: "This conversation is the Results stage: interpret results and write conclusions.",
+};
+export const isStage = (s: unknown): s is (typeof stageIds)[number] => typeof s === "string" && (stageIds as readonly string[]).includes(s);
+
 /** Guidance shared by every runtime (Pi prompt guidelines, MCP instructions). */
 export const WORKBENCH_INSTRUCTIONS = [
   "These tools operate the Pi Research workbench panes for the current strategy: ideas, sources (papers, highlights, comments), and saved research reviews.",
@@ -76,6 +105,11 @@ const optionalTarget = ideaTargetSchema
 const artifactId = uuid.optional().describe("Source id from sources_list. Omit to use the paper open in the window.");
 
 const define = <I>(tool: WorkbenchTool<I>) => tool;
+const rdIdea = z
+  .string()
+  .regex(/^r:[0-9a-f-]{36}$/)
+  .optional()
+  .describe("Saved idea (r:<id>) whose workspace to use. Omit for the idea Research Development is working on in the window.");
 export const tools: WorkbenchTool[] = [
   define({
     name: "strategy_rename", title: "Rename strategy",
@@ -160,6 +194,28 @@ export const tools: WorkbenchTool[] = [
     },
   }),
   define({
+    name: "ideas_pursued",
+    title: "List pursued ideas",
+    description:
+      "The ideas the user decided to pursue: the work of Literature and Research Development. Pursue stays with an idea as it is revised, so each is given at its latest saved version (with the version the decision was made on and its reason), all fields, the evidence it cites (source names resolved), its paper ranks, and coverage: papers, linked notes by stance, and gaps (no papers, no evidence, nothing contradicting, notes without a stance, notes judged on an earlier version, primary papers without notes). Unsaved edits are not included; pendingEdits says whether there are any.",
+    input: z.object({}).strict(),
+    readOnly: true,
+    run: ({ sid, wb }) => ({ focus: wb.focusIdea(sid), ideas: wb.pursuedIdeas(sid) }),
+  }),
+  define({
+    name: "literature_focus",
+    title: "Set the Literature focus idea",
+    description:
+      "Choose which pursued idea the Literature stage focuses on in the window (target r:<id> from ideas_pursued), or null for the overview of all pursued ideas. The focus decides which idea the Sources pane ranks papers for.",
+    input: z.object({ target: z.string().regex(/^r:[0-9a-f-]{36}$/).nullable() }).strict(),
+    readOnly: true,
+    run: ({ sid, wb }, { target }) => {
+      if (target && !wb.pursuedIdeas(sid).some((i) => i.target === target))
+        throw new Error(`Idea ${target} is not pursued. Only pursued ideas can be the Literature focus; see ideas_pursued.`);
+      return { focus: target, shown: wb.view.publish(sid, { type: "focus-idea", target }) };
+    },
+  }),
+  define({
     name: "idea_get",
     title: "Read an idea",
     description: "Read one idea in full: all fields, evidence, status, version, the last decision and its reason.",
@@ -202,7 +258,7 @@ export const tools: WorkbenchTool[] = [
   define({
     name: "idea_decide",
     title: "Decide on an idea",
-    description: "Record pursue, revise or reject, with a reason, on the latest saved version of an idea (it must have no unsaved edits). Only when the user asks.",
+    description: "Record pursue, revise or reject, with a reason, on the latest saved version of an idea (it must have no unsaved edits). Pursue stays with the idea through later versions; revise and reject are answered by the next version, which returns it to to-decide. Only when the user asks.",
     input: z.object({ target: optionalTarget, decision: z.enum(["pursue", "revise", "reject"]), reason: text.trim().min(1) }).strict(),
     run: ({ sid, wb }, { target, decision, reason }) => wb.decideIdea(sid, wb.resolveIdea(sid, target), decision, reason),
   }),
@@ -218,25 +274,345 @@ export const tools: WorkbenchTool[] = [
     },
   }),
 
+  /* ── Research Development workspaces ─────────────────────────────── */
+  define({
+    name: "rd_develop",
+    title: "Choose the idea to develop",
+    description: "Choose which pursued idea Research Development works on in the window (r:<id> from ideas_pursued), or null to clear. Each idea has its own workspace folder and conversation.",
+    input: z.object({ target: z.string().regex(/^r:[0-9a-f-]{36}$/).nullable() }).strict(),
+    readOnly: true,
+    run: ({ sid, wb }, { target }) => {
+      if (target && !wb.pursuedIdeas(sid).some((i) => i.target === target))
+        throw new Error(`Idea ${target} is not pursued. Research Development works on pursued ideas; see ideas_pursued.`);
+      return { developing: target, shown: wb.view.publish(sid, { type: "develop-idea", target }) };
+    },
+  }),
+  define({
+    name: "rd_files",
+    title: "List workspace files",
+    description: "List the files in an idea's Research Development workspace (code, data, documents), with size, modification time and whether each is a document the Documents pane shows.",
+    input: z.object({ idea: rdIdea }).strict(),
+    readOnly: true,
+    run: async ({ sid, wb }, { idea }) => {
+      const { target, dir } = await wb.rdWorkspace(sid, idea);
+      return { idea: target, files: wb.rd.files(dir) };
+    },
+  }),
+  define({
+    name: "rd_read",
+    title: "Read a workspace file",
+    description: "Read one file of an idea's workspace (text up to 1 MiB; PDFs and images as base64).",
+    input: z.object({ idea: rdIdea, path: z.string().min(1).max(500) }).strict(),
+    readOnly: true,
+    run: async ({ sid, wb }, { idea, path }) => wb.rd.read((await wb.rdWorkspace(sid, idea)).dir, path),
+  }),
+  define({
+    name: "rd_changes",
+    title: "Changes since the last checkpoint",
+    description: "The files changed in an idea's workspace since its last checkpoint: status (A new, M modified, D deleted), lines added and removed (binary files flagged), and totals. Read one file's diff with rd_diff.",
+    input: z.object({ idea: rdIdea }).strict(),
+    readOnly: true,
+    run: async ({ sid, wb }, { idea }) => wb.rd.changes((await wb.rdWorkspace(sid, idea)).dir),
+  }),
+  define({
+    name: "rd_diff",
+    title: "One file's diff",
+    description: "The unified diff of one file in an idea's workspace: against the last checkpoint, or within a checkpoint (sha from rd_history). Capped at 512 KiB per file (truncated says so).",
+    input: z.object({ idea: rdIdea, path: z.string().min(1).max(500), sha: z.string().regex(/^[0-9a-f]{7,40}$/).optional() }).strict(),
+    readOnly: true,
+    run: async ({ sid, wb }, { idea, path, sha }) => wb.rd.fileDiff((await wb.rdWorkspace(sid, idea)).dir, path, sha),
+  }),
+  define({
+    name: "rd_checkpoint",
+    title: "Record a checkpoint",
+    description: "Record the workspace's current state as a checkpoint (a git commit) with a short message, so later changes are shown against it. Refused when nothing changed.",
+    input: z.object({ idea: rdIdea, message: z.string().trim().min(1).max(500) }).strict(),
+    run: async ({ sid, wb }, { idea, message }) => {
+      const cp = await wb.rd.checkpoint((await wb.rdWorkspace(sid, idea)).dir, message);
+      wb.view.publish(sid, { type: "refresh" });
+      return cp;
+    },
+  }),
+  define({
+    name: "rd_history",
+    title: "Workspace checkpoints",
+    description: "The checkpoints of an idea's workspace, newest first; give sha for one checkpoint's files (status and line counts), then rd_diff with that sha for a file.",
+    input: z.object({ idea: rdIdea, sha: z.string().regex(/^[0-9a-f]{7,40}$/).optional() }).strict(),
+    readOnly: true,
+    run: async ({ sid, wb }, { idea, sha }) => {
+      const { dir } = await wb.rdWorkspace(sid, idea);
+      return sha ? wb.rd.show(dir, sha) : { checkpoints: await wb.rd.history(dir) };
+    },
+  }),
+
+  /* ── Production (after Research Development) ─────────────────────── */
+  define({
+    name: "production_commit",
+    title: "Send an idea to production",
+    description:
+      "Send a pursued idea from Research Development to the production stages (Data, Design & Code, Backtests, Results). Freezes the idea's exact version, its workspace checkpoint and the data snapshots the work used (default: those its code references). Refused while the workspace has changes not yet checkpointed. Replaces the current production idea (earlier commits are kept). Only when the user asks.",
+    input: productionCommitInputSchema,
+    run: async ({ sid, wb }, input) => wb.commitProduction(sid, input),
+  }),
+  define({
+    name: "production_preview",
+    title: "Preview sending an idea to production",
+    description: "What production_commit would freeze for an idea: its version, the workspace's last checkpoint, changes not yet checkpointed (which block the commit), and the data snapshots with whether its code references them.",
+    input: z.object({ idea: z.string().regex(/^r:[0-9a-f-]{36}$/).optional() }).strict(),
+    readOnly: true,
+    run: ({ sid, wb }, { idea }) => wb.productionPreview(sid, idea),
+  }),
+  define({
+    name: "production_status",
+    title: "What is in production",
+    description: "The idea currently in production (version, workspace checkpoint, frozen snapshots, when) and how many earlier commits there were.",
+    input: z.object({}).strict(),
+    readOnly: true,
+    run: ({ sid, wb }) => {
+      const p = wb.store.get(sid).production;
+      return { current: p?.current ?? null, earlier: p?.history.length ?? 0 };
+    },
+  }),
+
+  /* ── Production feeds (the Data stage) ───────────────────────────── */
+  define({
+    name: "feeds_list",
+    title: "List production feeds",
+    description:
+      "The strategy's production feeds (live exchange streams, scheduled pulls, the user's scripts) with their state (live, backfilling, waiting, paused, error, stopped), lag, rows today and in total, frozen partitions, recent errors, and whether the background collection service is on.",
+    input: z.object({}).strict(),
+    readOnly: true,
+    run: ({ sid, wb }) => {
+      const service = wb.service.status();
+      return { service, feeds: wb.feeds.list(sid, service.running) };
+    },
+  }),
+  define({
+    name: "feed_create",
+    title: "Create a production feed",
+    description:
+      'Create a production feed; the background service starts collecting it within seconds when collection is on. kind "stream": a live exchange stream (Binance spot/um/cm: trades, aggTrades, klines, bookTicker, depth10, markPrice, liquidations; Coinbase: trades, ticker), optionally backfilling complete past days from the Binance archive. kind "pull": scheduled incremental pulls (binance-archive datasets, Binance or Coinbase bars, FRED). kind "script": the user\'s own command run on a schedule in an idea workspace, writing CSV or Parquet to $PI_RESEARCH_OUT (rows after $PI_RESEARCH_SINCE). Data lands in hourly (streams) or daily partitions, frozen once closed. Only when the user asks.',
+    input: feedCreateToolSchema,
+    run: ({ sid, wb }, raw) => {
+      const input = feedCreateSchema.parse(raw);
+      const def = wb.feeds.create(sid, input, () => wb.store.get(sid).production?.current?.idea.slice(2));
+      wb.view.publish(sid, { type: "refresh" });
+      return def;
+    },
+  }),
+  define({
+    name: "feed_update",
+    title: "Pause, resume or rename a feed",
+    description: "Pause or resume a production feed (paused feeds stop collecting; their data stays) or change its title.",
+    input: feedUpdateSchema,
+    run: ({ sid, wb }, { id, ...patch }) => {
+      const d = wb.feeds.update(sid, id, patch);
+      wb.view.publish(sid, { type: "refresh" });
+      return d;
+    },
+  }),
+  define({
+    name: "feed_delete",
+    title: "Delete a production feed",
+    description: "Delete a production feed; its collected partitions too unless keepData. Only on an explicit request.",
+    input: feedDeleteSchema,
+    destructive: true,
+    run: ({ sid, wb }, { id, keepData }) => {
+      const r = wb.feeds.delete(sid, id, !!keepData);
+      wb.view.publish(sid, { type: "refresh" });
+      return r;
+    },
+  }),
+  define({
+    name: "feed_partitions",
+    title: "A feed's partitions",
+    description: "A production feed's frozen partitions, newest first: period, rows, bytes, SHA-256, first/last time and quality (duplicates, out-of-order rows, largest gap, missing bars, late rows); and its outages: stretches the live connections did not cover by themselves, with the cause, rows known missing, fetched again from the exchange, and still missing (or a hole, for data without ids such as books).",
+    input: z.object({ id: z.string().regex(/^[a-z0-9-]{1,80}$/), limit: z.number().int().min(1).max(1000).optional() }).strict(),
+    readOnly: true,
+    run: ({ sid, wb }, { id, limit }) => ({ partitions: wb.feeds.partitions(sid, id, limit ?? 50), outages: wb.feeds.outages(sid, id, limit ?? 50) }),
+  }),
+  define({
+    name: "feed_rows",
+    title: "A feed's latest rows",
+    description: "A production feed's latest rows (newest first) with its columns and types, and a thinned series of its main value over recent partitions. Files: Data/production/<id>/data/**/*.parquet (polars: pl.scan_parquet).",
+    input: z.object({ id: z.string().regex(/^[a-z0-9-]{1,80}$/), limit: z.number().int().min(1).max(500).optional() }).strict(),
+    readOnly: true,
+    run: ({ sid, wb }, { id, limit }) => wb.feeds.rows(sid, id, limit ?? 100),
+  }),
+  define({
+    name: "feeds_service",
+    title: "Background collection status",
+    description: "Whether the background feed service is switched on and running (heartbeat), how many feeds it serves, and where it logs.",
+    input: z.object({}).strict(),
+    readOnly: true,
+    run: ({ wb }) => wb.service.status(),
+  }),
+  define({
+    name: "feeds_service_set",
+    title: "Switch background collection on or off",
+    description: "Switch the background feed service on (installs and starts a macOS login agent that keeps collecting while the app is closed) or off (stops and removes it). Only when the user asks.",
+    input: feedServiceSchema,
+    run: async ({ wb }, { on }) => (on ? wb.service.enable() : wb.service.disable()),
+  }),
+
+  /* ── Data snapshots (exploratory data for Research Development) ──── */
+  define({
+    name: "data_snapshots",
+    title: "List data snapshots",
+    description:
+      "The strategy's frozen data snapshots (every idea workspace sees them read-only in data/): name, title, source and query, rows, first/last timestamps, columns and types, size, SHA-256. All fetched data is Parquet (zstd; timestamps are UTC microseconds). A file ends in .parquet; a folder (file ending in /) holds one Parquet file per day. Read them with polars, lazily for large ones: pl.scan_parquet('data/<name>/*.parquet') or pl.read_parquet('data/<file>').",
+    input: z.object({}).strict(),
+    readOnly: true,
+    run: ({ sid, wb }) => ({ folder: "data/", snapshots: wb.data.snapshots(sid) }),
+  }),
+  define({
+    name: "data_preview",
+    title: "Preview a data snapshot",
+    description: "One snapshot's manifest with a preview (first and last rows, a thinned series of its close/value column) and the code in idea workspaces that references its file.",
+    input: z.object({ name: z.string().regex(/^[a-z0-9-]{1,120}$/) }).strict(),
+    readOnly: true,
+    run: ({ sid, wb }, { name }) => ({ ...wb.data.snapshot(sid, name), references: wb.data.references(sid, name) }),
+  }),
+  define({
+    name: "data_symbols",
+    title: "Look up tickers",
+    description:
+      "Ticker suggestions for data_fetch: symbols a source can serve that match the query (prefix and contains matches, ranked). Sources: binance-archive (give market and dataset; lists what the archive holds, delisted included), binance (spot bars), coinbase (products), fred (a curated list of common series; any id can still be fetched).",
+    input: z
+      .object({
+        source: z.enum(["binance-archive", "binance", "coinbase", "fred"]),
+        query: z.string().max(40),
+        market: z.enum(MARKETS).optional(),
+        dataset: z.string().max(40).optional(),
+      })
+      .strict(),
+    readOnly: true,
+    run: ({ sid, wb }, { source, query, market, dataset }) => {
+      wb.store.get(sid);
+      return wb.data.symbols(source, query, market, dataset);
+    },
+  }),
+  define({
+    name: "data_estimate",
+    title: "Estimate an archive download",
+    description:
+      "Before fetching tick-level history from the Binance archive: how many daily files, the download size, the dates the archive lacks, and the free disk space. Markets: spot, um (USDⓈ-M futures), cm (COIN-M futures), option. Datasets per market: spot trades/aggTrades/klines; um and cm trades/aggTrades/klines/markPriceKlines/indexPriceKlines/premiumIndexKlines/bookTicker/bookDepth/metrics/fundingRate (cm also liquidationSnapshot); option BVOLIndex/EOHSummary (historical only).",
+    input: z
+      .object({
+        market: z.enum(MARKETS),
+        dataset: z.string().min(1).max(40),
+        symbol: z.string().trim().min(3).max(30),
+        interval: z.string().max(4).optional().describe("For klines datasets: 1s (spot only), 1m … 1d."),
+        start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      })
+      .strict(),
+    readOnly: true,
+    run: async ({ sid, wb }, { market, dataset, symbol, interval, start, end }) => {
+      wb.store.get(sid);
+      return wb.data.estimate(sid, { market, dataset, symbol: symbol.toUpperCase(), ...(interval ? { interval } : {}) }, start, end);
+    },
+  }),
+  define({
+    name: "data_fetch",
+    title: "Fetch market data",
+    description:
+      'Fetch history from a public source into a new frozen Parquet snapshot, in the background (see data_jobs). source "binance-archive" is tick level and derivatives: the Binance public archive (market spot | um | cm | option; dataset trades, aggTrades, klines incl. 1s, bookTicker, bookDepth, metrics, fundingRate, mark/index/premium price klines, option BVOLIndex/EOHSummary), one checksum-verified Parquet file per day in a folder; run data_estimate first for large ranges. Other sources: "binance" bars via the API (symbol like BTCUSDT; 1s…1w), "coinbase" candles (BTC-USD; 1m, 5m, 15m, 1h, 6h, 1d), "fred" series (DGS10). Dates are YYYY-MM-DD UTC, end inclusive. Only when the user asks for data.',
+    input: z
+      .object({
+        source: z.enum(["binance", "coinbase", "fred", "binance-archive"]),
+        symbol: z.string().trim().min(1).max(40),
+        interval: z.string().max(4).optional().describe("Bar interval (binance, coinbase; archive klines datasets)."),
+        market: z.enum(MARKETS).optional().describe("binance-archive: spot, um, cm or option."),
+        dataset: z.string().max(40).optional().describe("binance-archive: e.g. trades, aggTrades, bookDepth, metrics, fundingRate."),
+        start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        title: z.string().trim().max(200).optional(),
+      })
+      .strict(),
+    run: ({ sid, wb }, { source, symbol, interval, market, dataset, start, end, title }) => {
+      wb.store.get(sid);
+      let src: FetchSource;
+      if (source === "binance-archive") {
+        if (!market || !dataset) throw new Error("Give market (spot, um, cm, option) and dataset (e.g. trades) for the archive.");
+        src = { kind: "binance-archive", market, dataset, symbol: symbol.toUpperCase(), ...(interval ? { interval } : {}) };
+      } else if (source === "fred") src = { kind: "fred", symbol };
+      else {
+        if (!interval) throw new Error("Give an interval (e.g. 1m, 1h, 1d).");
+        if (!(INTERVALS as readonly string[]).includes(interval)) throw new Error(`Intervals: ${INTERVALS.join(", ")}`);
+        const iv = interval as (typeof INTERVALS)[number];
+        src = source === "binance" ? { kind: "binance", symbol, interval: iv } : { kind: "coinbase", symbol, interval: iv };
+      }
+      return { job: wb.data.fetch(sid, { source: src, start, end, ...(title ? { title } : {}) }) };
+    },
+  }),
+  define({
+    name: "data_jobs",
+    title: "Data fetches in progress",
+    description: "The strategy's data fetches: status, rows so far, progress and the resulting snapshot.",
+    input: z.object({}).strict(),
+    readOnly: true,
+    run: ({ sid, wb }) => ({ jobs: wb.data.jobsOf(sid) }),
+  }),
+  define({
+    name: "data_delete",
+    title: "Delete a data snapshot",
+    description:
+      "Delete a data snapshot for good (its file or daily folder and its manifest), freeing the disk. It cannot be restored; the source can be fetched again as a new snapshot. Returns the code in idea workspaces that referenced it. Only on an explicit request to delete that snapshot; check data_preview and tell the user what referenced it.",
+    input: z.object({ name: z.string().regex(/^[a-z0-9-]{1,120}$/) }).strict(),
+    destructive: true,
+    run: ({ sid, wb }, { name }) => {
+      const r = wb.data.delete(sid, name);
+      wb.view.publish(sid, { type: "refresh" });
+      return r;
+    },
+  }),
+  define({
+    name: "data_cancel",
+    title: "Cancel a data fetch",
+    description: "Stop a running data fetch; nothing partial is kept.",
+    input: z.object({ job: z.uuid() }).strict(),
+    run: ({ sid, wb }, { job }) => wb.data.cancel(sid, job),
+  }),
+  define({
+    name: "data_register",
+    title: "Register a file as a data snapshot",
+    description:
+      "Freeze a data file from an idea's workspace (CSV, CSV.GZ, TSV, Parquet or JSON; e.g. written by the user's own code from Bloomberg or another paid feed) as a shared snapshot with provenance. The file is copied; give a title and a note saying where it came from.",
+    input: z.object({ idea: rdIdea, path: z.string().min(1).max(500), title: z.string().trim().min(1).max(200), note: z.string().trim().max(2000).optional() }).strict(),
+    run: async ({ sid, wb }, { idea, path: rel, title, note }) => {
+      const { dir } = await wb.rdWorkspace(sid, idea);
+      const m = await wb.data.register(sid, wb.rd.resolve(dir, rel), rel, title, note);
+      wb.view.publish(sid, { type: "refresh" });
+      const { preview: _, ...rest } = m;
+      return rest;
+    },
+  }),
+
   /* ── Sources ─────────────────────────────────────────────────────── */
   define({
     name: "sources_list",
     title: "List sources",
     description: "List the strategy's source library (papers and files) with ids, section (primary, secondary or other) and note counts, which paper is open in the window, and recently deleted sources.",
-    input: z.object({}).strict(),
+    input: z
+      .object({ idea: z.string().regex(/^r:[0-9a-f-]{36}$/).optional().describe("Also give each source's rank for this saved idea (r:<id>).") })
+      .strict(),
     readOnly: true,
-    run: ({ sid, wb }) => {
+    run: ({ sid, wb }, { idea }) => {
       const s = wb.store.get(sid);
       const ctx = wb.view.context(sid);
+      const ranks = idea ? wb.ranksFor(sid, idea) : undefined;
       return {
         windowOpen: wb.view.connected(sid),
         activeArtifact: ctx.activeArtifact ?? null,
+        literatureFocus: ctx.focusIdea ?? null,
         page: ctx.page ?? null,
         sources: s.artifacts.map((a) => ({
           id: a.id,
           name: a.name,
           kind: a.kind,
           importance: s.importance?.[a.id] ?? "other",
+          ...(ranks ? { ideaRank: ranks[a.id] ?? "other" } : {}),
           notes: s.annotations.filter((n) => n.artifactId === a.id).length,
         })),
         recentlyDeleted: (s.deleted ?? []).map((d) => ({ id: d.artifact.id, name: d.artifact.name, at: d.at })),
@@ -246,12 +622,14 @@ export const tools: WorkbenchTool[] = [
   define({
     name: "source_importance",
     title: "Move a source to a library section",
-    description: 'Put a source under Primary, Secondary or Other sources in the library ("other" is where new sources start). Organises the library only; the file and its notes are unchanged.',
+    description:
+      'Put a source under Primary, Secondary or Other sources ("other" is where new sources start). With idea (r:<id>), rank it for that idea, as the Literature stage does per idea; papers an idea cites count as primary for it until ranked otherwise. Organises the library only; the file and its notes are unchanged.',
     input: sourceImportanceSchema,
-    run: ({ sid, wb }, { artifactId, importance }) => {
-      wb.store.setImportance(sid, artifactId, importance);
+    run: ({ sid, wb }, { artifactId, importance, idea }) => {
+      if (idea && !wb.savedIdea(sid, idea)) throw new Error(`Idea ${idea} is not a saved idea. Use ideas_pursued or ideas_list for targets.`);
+      wb.store.setImportance(sid, artifactId, importance, idea?.slice(2));
       wb.view.publish(sid, { type: "refresh" });
-      return { artifactId, importance };
+      return { artifactId, importance, ...(idea ? { idea } : {}) };
     },
   }),
   define({
@@ -266,7 +644,7 @@ export const tools: WorkbenchTool[] = [
       return {
         artifactId: a.id,
         total: notes.length,
-        notes: notes.slice(offset, offset + 20).map((n) => ({ id: n.id, page: n.anchor.page, quote: n.anchor.quote, comment: n.comment, status: n.status })),
+        notes: notes.slice(offset, offset + 20).map((n) => ({ id: n.id, page: n.anchor.page, quote: n.anchor.quote, comment: n.comment, status: n.status, ideas: wb.linksOf(sid, n.id) })),
       };
     },
   }),
@@ -323,9 +701,59 @@ export const tools: WorkbenchTool[] = [
   define({
     name: "note_create",
     title: "Highlight or comment",
-    description: "Create a highlight (no comment) or a comment anchored to an exact quote on a PDF page. The quote must appear on that page; copy it from paper_read or paper_find.",
-    input: z.object({ artifactId, page: z.number().int().min(1), quote: z.string().trim().min(1).max(12000), comment: text.trim().min(1).optional() }).strict(),
-    run: async ({ sid, wb }, input) => wb.createNote(sid, input),
+    description:
+      "Create a highlight (no comment) or a comment anchored to an exact quote on a PDF page. The quote must appear on that page; copy it from paper_read or paper_find. Give stance (and idea, or the Literature focus is used) to link the note to an idea as supporting, contradicting or refining it.",
+    input: z
+      .object({
+        artifactId,
+        page: z.number().int().min(1),
+        quote: z.string().trim().min(1).max(12000),
+        comment: text.trim().min(1).optional(),
+        idea: z.string().regex(/^r:[0-9a-f-]{36}$/).optional().describe("Saved idea (r:<id>) the note bears on. Omit with a stance to use the Literature focus."),
+        stance: z.enum([...stances, "unclassified"]).optional().describe("How the passage bears on the idea."),
+      })
+      .strict(),
+    run: async ({ sid, wb }, { idea, stance, ...input }) => {
+      // Check the link first, so a refused link never leaves an unlinked note behind.
+      const target = idea || stance ? wb.linkTarget(sid, idea) : undefined;
+      const created = await wb.createNote(sid, input);
+      if (!target) return created;
+      const link = wb.linkNote(sid, created.noteId, target, stance ?? "unclassified");
+      return { ...created, link };
+    },
+  }),
+  define({
+    name: "note_link",
+    title: "Link a note to an idea",
+    description:
+      'Say how a highlight or comment bears on an idea: supports, contradicts or refines it ("unclassified" links without a stance, "none" removes the link). The link records the idea\'s current version. Omit idea to use the Literature focus. The note itself is unchanged.',
+    input: noteLinkInputSchema,
+    run: ({ sid, wb }, { noteId, idea, stance }) => {
+      const target = wb.linkTarget(sid, idea);
+      if (stance === "none") {
+        wb.store.setNoteLink(sid, noteId, target.slice(2), null);
+        wb.view.publish(sid, { type: "refresh" });
+        return { noteId, idea: target, removed: true };
+      }
+      return { noteId, ...wb.linkNote(sid, noteId, target, stance) };
+    },
+  }),
+  define({
+    name: "idea_add_note",
+    title: "Add a note to an idea as evidence",
+    description:
+      "Revise an idea from a finding: add a highlight or comment (quote, page, comment, and its stance on the idea) to the idea's evidence as an unsaved revision, and open it in the Idea pane. Nothing is saved as a version; the user edits and saves it (a pursued idea stays pursued). Omit idea to use the Literature focus. The same note is not added twice.",
+    input: ideaAddNoteSchema,
+    run: ({ sid, wb }, input) => wb.addNoteToIdea(sid, input),
+  }),
+  define({
+    name: "idea_notes",
+    title: "Notes on an idea",
+    description:
+      "The highlights and comments linked to an idea, with stance, source, page, quote and the idea version each was judged against; plus counts by stance. Omit idea to use the Literature focus.",
+    input: z.object({ idea: z.string().regex(/^r:[0-9a-f-]{36}$/).optional(), offset: z.number().int().min(0).optional() }).strict(),
+    readOnly: true,
+    run: ({ sid, wb }, { idea, offset = 0 }) => wb.ideaNotes(sid, wb.linkTarget(sid, idea), offset),
   }),
   define({
     name: "note_update",
@@ -388,6 +816,17 @@ export class Workbench {
   strategyDeleted: (sid: string) => void = () => {};
   readonly view = new ViewChannel();
   readonly pdf = new PdfText();
+  readonly rd: RdWorkspaces;
+  readonly feeds: FeedCatalog;
+  private _service?: FeedService;
+  /** The background feed service for this data root (the composition root may set its own). */
+  get service() {
+    return (this._service ??= new FeedService(path.dirname(this.store.root)));
+  }
+  set service(s: FeedService) {
+    this._service = s;
+  }
+  readonly data: DataFeeds;
   readonly search: (sid: string, text: string) => Promise<import("../../desktop/papers.ts").PaperHit[] | null>;
   private byName = new Map(tools.map((t) => [t.name, t]));
   constructor(
@@ -397,6 +836,9 @@ export class Workbench {
     searchGapMs = 3000,
   ) {
     this.search = createPaperSearch(papers, searchGapMs);
+    this.rd = new RdWorkspaces((sid) => store.storage.strategyRoot(sid));
+    this.feeds = new FeedCatalog((sid) => store.storage.strategyRoot(sid));
+    this.data = new DataFeeds((sid) => store.storage.strategyRoot(sid), papers);
   }
 
   manifest(): ToolManifest[] {
@@ -422,6 +864,7 @@ export class Workbench {
     return tool.run({ sid, wb: this }, parsed.data);
   }
   close() {
+    this._service?.dispose();
     this.view.close();
     return this.pdf.close();
   }
@@ -454,25 +897,228 @@ export class Workbench {
   private savedContent(sid: string, v: SavedIdea): IdeaDraftContent {
     return this.platform.versionContent(sid, { id: v.id, hash: v.hash }).value.content as IdeaDraftContent;
   }
-  private decision(sid: string, v: SavedIdea) {
-    return [...this.science(sid).decisions]
-      .filter((d) => d.target.id === v.id && d.target.hash === v.hash)
-      .sort((a, b) => String(a.at).localeCompare(String(b.at)))
-      .at(-1);
+  /** Status by the shared rule (pursue survives revisions). */
+  private status(sid: string, v: SavedIdea) {
+    const science = this.science(sid);
+    return ideaStatus(v, science.versions.filter((x) => x.kind === "idea"), science.decisions);
   }
+
   ideas(sid: string): IdeaSummary[] {
     const board = this.store.ideaBoard(sid);
     return [
       ...board.cards.map((d) => ({ target: `d:${d.key}`, status: "draft" as const, version: null, edited: true, archived: false, content: d.content })),
       ...[...this.latestSaved(sid).values()].map((v) => ({
         target: `r:${v.id}`,
-        status: (this.decision(sid, v)?.decision ?? "to-decide") as IdeaSummary["status"],
+        status: this.status(sid, v).status,
         version: v.version,
         edited: !!board.edits[v.id],
         archived: board.archived.includes(v.id),
         content: board.edits[v.id] ?? this.savedContent(sid, v),
       })),
     ];
+  }
+  /** The idea a link is for: the given saved idea, else the Literature focus. */
+  linkTarget(sid: string, idea?: string) {
+    const t = idea ?? this.focusIdea(sid);
+    if (!t) throw new Error("No idea given and no Literature focus is set. Use ideas_pursued for targets.");
+    if (!this.savedIdea(sid, t)) throw new Error(`Idea ${t} is not a saved idea. Use ideas_pursued or ideas_list for targets.`);
+    return t;
+  }
+  /** Link (or re-judge) a note against the idea's current version. */
+  linkNote(sid: string, noteId: string, target: string, stance: Stance | "unclassified") {
+    const v = this.savedIdea(sid, target)!;
+    const link = { stance: stance === "unclassified" ? null : stance, version: v.version, hash: v.hash, at: new Date().toISOString() };
+    this.store.setNoteLink(sid, noteId, v.id, link);
+    this.view.publish(sid, { type: "refresh" });
+    return { idea: target, stance: link.stance, onVersion: v.version };
+  }
+  /** Revise an idea from a note: append it to the idea's evidence as a pending edit. */
+  addNoteToIdea(sid: string, input: { noteId: string; idea?: string; show?: boolean }) {
+    const target = input.idea ?? this.focusIdea(sid);
+    if (!target) throw new Error("No idea given and no Literature focus is set. Use ideas_pursued for targets.");
+    const t = this.resolveIdea(sid, target);
+    if (t.startsWith("r:") && this.store.ideaBoard(sid).archived.includes(t.slice(2)))
+      throw new Error("This idea is archived. Restore it in the Idea pane before revising it.");
+    const s = this.store.get(sid);
+    const note = s.annotations.find((n) => n.id === input.noteId);
+    if (!note) throw new Error("Note not found. Use source_notes or idea_notes for ids.");
+    const art = s.artifacts.find((a) => a.id === note.artifactId);
+    if (!art) throw new Error("The note's source is not in the library.");
+    const stance = t.startsWith("r:") ? s.noteLinks?.[note.id]?.[t.slice(2)]?.stance : null;
+    const comment = note.comment && note.comment !== "Highlight" ? ` — ${note.comment}` : "";
+    // Same shape as citing a highlight from the Idea pane, plus the stance.
+    const entry = {
+      category: "cited" as const,
+      reference: { id: art.id, hash: art.hash },
+      description: `p. ${note.anchor.page}: “${note.anchor.quote}”${comment}${stance ? ` (${stance})` : ""}`.slice(0, 12000),
+    };
+    const content = this.ideas(sid).find((i) => i.target === t)!.content;
+    const already = content.evidence.some((e) => e.reference.id === entry.reference.id && e.description === entry.description);
+    if (!already) {
+      if (content.evidence.length >= 50) throw new Error("This idea already cites 50 pieces of evidence; remove some before adding more.");
+      this.applyBoard(sid, { op: "patch", target: t as `d:${string}`, patch: { evidence: [...content.evidence, entry] } });
+    }
+    const shown = input.show === false ? false : this.view.publish(sid, { type: "open-idea", target: t });
+    return { idea: t, added: !already, evidence: already ? content.evidence.length : content.evidence.length + 1, shown };
+  }
+  /** How the literature covers one idea (papers, notes by stance, gaps). */
+  coverage(sid: string, ideaId: string, version: number) {
+    const s = this.store.get(sid);
+    const live = new Set(s.artifacts.map((a) => a.id));
+    const ranks = Object.fromEntries(Object.entries(this.ranksFor(sid, `r:${ideaId}`)).filter(([id]) => live.has(id)));
+    const linked = s.annotations.flatMap((n) => {
+      const link = s.noteLinks?.[n.id]?.[ideaId];
+      return link && live.has(n.artifactId) ? [{ artifactId: n.artifactId, link }] : [];
+    });
+    return ideaCoverage(ranks, linked, version);
+  }
+  /** A note's idea links, with titles and whether the idea moved on since. */
+  linksOf(sid: string, noteId: string) {
+    const links = this.store.get(sid).noteLinks?.[noteId] ?? {};
+    const latest = this.latestSaved(sid);
+    return Object.entries(links).map(([ideaId, l]) => {
+      const v = latest.get(ideaId);
+      return { idea: `r:${ideaId}`, title: v ? this.savedContent(sid, v).title : null, stance: l.stance, onVersion: l.version, currentVersion: v?.version ?? null };
+    });
+  }
+  ideaNotes(sid: string, target: string, offset = 0) {
+    const s = this.store.get(sid);
+    const v = this.savedIdea(sid, target)!;
+    const linked = s.annotations.flatMap((n) => {
+      const l = s.noteLinks?.[n.id]?.[v.id];
+      return l ? [{ n, l }] : [];
+    });
+    const count = (st: Stance | null) => linked.filter(({ l }) => l.stance === st).length;
+    return {
+      idea: target,
+      title: this.savedContent(sid, v).title,
+      currentVersion: v.version,
+      total: linked.length,
+      counts: { supports: count("supports"), contradicts: count("contradicts"), refines: count("refines"), unclassified: count(null) },
+      notes: linked.slice(offset, offset + 20).map(({ n, l }) => ({
+        noteId: n.id,
+        source: s.artifacts.find((a) => a.id === n.artifactId)?.name ?? null,
+        artifactId: n.artifactId,
+        page: n.anchor.page,
+        quote: n.anchor.quote,
+        comment: n.comment,
+        stance: l.stance,
+        onVersion: l.version,
+      })),
+    };
+  }
+  async productionPreview(sid: string, idea?: string) {
+    const target = idea ?? this.developIdea(sid);
+    if (!target) throw new Error("No idea given and none is being developed in the window.");
+    const p = this.pursuedIdeas(sid).find((i) => i.target === target);
+    const { dir } = await this.rdWorkspace(sid, target);
+    const pending = (await this.rd.changes(dir)).files.length;
+    const [cp] = await this.rd.history(dir, 1);
+    return {
+      idea: target,
+      title: p?.title ?? null,
+      version: p?.version ?? null,
+      pursued: !!p,
+      checkpoint: cp ? { sha: cp.sha, message: cp.message, at: cp.at } : null,
+      pending,
+      snapshots: this.data.snapshots(sid).map((s) => ({ name: s.name, title: s.title, bytes: s.bytes, referenced: this.data.references(sid, s.name).some((r) => r.idea === target) })),
+      current: this.store.get(sid).production?.current ?? null,
+    };
+  }
+  /** Freeze an idea for production: exact version, clean workspace checkpoint, snapshots used. */
+  async commitProduction(sid: string, input: { idea?: string; snapshots?: string[]; note?: string }) {
+    const target = input.idea ?? this.developIdea(sid);
+    if (!target) throw new Error("No idea given and none is being developed in the window. Use ideas_pursued for targets.");
+    const p = this.pursuedIdeas(sid).find((i) => i.target === target);
+    if (!p) throw new Error(`Idea ${target} is not pursued. Only pursued ideas can be sent to production.`);
+    const { dir } = await this.rdWorkspace(sid, target);
+    const pending = (await this.rd.changes(dir)).files;
+    if (pending.length)
+      throw new Error(`The idea's workspace has ${pending.length} change${pending.length === 1 ? "" : "s"} not yet checkpointed. Record a checkpoint first, so production gets an exact state.`);
+    const [cp] = await this.rd.history(dir, 1);
+    const all = this.data.snapshots(sid);
+    const names = input.snapshots ?? all.filter((s) => this.data.references(sid, s.name).some((r) => r.idea === target)).map((s) => s.name);
+    const snapshots = names.map((n) => {
+      const s = all.find((x) => x.name === n);
+      if (!s) throw new Error(`Snapshot ${n} not found. Use data_snapshots for names.`);
+      return { name: s.name, sha256: s.sha256 };
+    });
+    const commit: ProductionCommit = {
+      idea: target,
+      title: p.title,
+      version: p.version,
+      hash: p.hash,
+      checkpoint: cp.sha,
+      checkpointMessage: cp.message,
+      snapshots,
+      ...(input.note ? { note: input.note } : {}),
+      committedAt: new Date().toISOString(),
+    };
+    this.store.commitProduction(sid, commit);
+    this.view.publish(sid, { type: "refresh" });
+    return commit;
+  }
+  /** The idea Research Development works on in the window, if still saved. */
+  developIdea(sid: string) {
+    const d = this.view.context(sid).developIdea;
+    return d && this.savedIdea(sid, d) ? d : null;
+  }
+  /** An idea's workspace (created on first use), for the given or the window's idea. */
+  async rdWorkspace(sid: string, idea?: string) {
+    const target = idea ?? this.developIdea(sid);
+    if (!target) throw new Error("No idea given and none is being developed in the window. Use ideas_pursued for targets.");
+    const v = this.savedIdea(sid, target);
+    if (!v) throw new Error(`Idea ${target} is not a saved idea.`);
+    return { target, dir: await this.rd.ensure(sid, v.id, this.savedContent(sid, v).title) };
+  }
+  /** A saved idea's latest version, if the target names one. */
+  savedIdea(sid: string, target: string) {
+    return target.startsWith("r:") ? this.latestSaved(sid).get(target.slice(2)) : undefined;
+  }
+  /** Literature's focus idea in the window, if it is still pursued. */
+  focusIdea(sid: string) {
+    const f = this.view.context(sid).focusIdea;
+    return f && this.pursuedIdeas(sid).some((i) => i.target === f) ? f : null;
+  }
+  /** One idea's ranks over the library: explicit ranks over "cited = primary". */
+  ranksFor(sid: string, target: string) {
+    const v = this.savedIdea(sid, target);
+    if (!v) throw new Error(`Idea ${target} is not a saved idea.`);
+    const live = new Set(this.store.get(sid).artifacts.map((a) => a.id));
+    const cited = this.savedContent(sid, v).evidence.map((e) => e.reference?.id).filter((id): id is string => !!id && live.has(id));
+    return ideaRanks(this.store.get(sid).ideaImportance?.[v.id], cited);
+  }
+  /** Pursued ideas at their latest saved version (never pending edits). */
+  pursuedIdeas(sid: string) {
+    const s = this.store.get(sid);
+    const board = this.store.ideaBoard(sid);
+    const name = (id: string) =>
+      s.artifacts.find((a) => a.id === id)?.name ??
+      (s.deleted ?? []).find((d) => d.artifact.id === id)?.artifact.name ??
+      (s.batches.find((b) => b.id === id) ? `review ${id.slice(0, 8)}` : null);
+    return [...this.latestSaved(sid).values()]
+      .map((v) => ({ v, st: this.status(sid, v) }))
+      .filter(({ v, st }) => st.status === "pursue" && !board.archived.includes(v.id))
+      .map(({ v, st }) => {
+        const d = st.decision!;
+        const content = this.savedContent(sid, v);
+        return {
+          target: `r:${v.id}`,
+          title: content.title,
+          version: v.version,
+          hash: v.hash,
+          pursuedOnVersion: d.onVersion,
+          decidedAt: d.at,
+          reason: d.reason,
+          pendingEdits: !!board.edits[v.id],
+          ranks: this.ranksFor(sid, `r:${v.id}`),
+          coverage: this.coverage(sid, v.id, v.version),
+          content: {
+            ...content,
+            evidence: content.evidence.map((e) => ({ ...e, source: e.reference ? name(e.reference.id) : null })),
+          },
+        };
+      });
   }
   resolveIdea(sid: string, target?: string) {
     const t = target ?? this.view.context(sid).ideaTarget ?? undefined;
@@ -484,8 +1130,8 @@ export class Workbench {
     const t = this.resolveIdea(sid, target);
     const i = this.ideas(sid).find((x) => x.target === t)!;
     const saved = t.startsWith("r:") ? this.latestSaved(sid).get(t.slice(2)) : undefined;
-    const d = saved && this.decision(sid, saved);
-    return { ...i, decision: d ? { decision: d.decision, reason: d.reason, onVersion: saved!.version } : null };
+    const d = saved && this.status(sid, saved).decision;
+    return { ...i, decision: d ? { decision: d.decision, reason: d.reason, onVersion: d.onVersion, ...(d.carried ? { carried: true } : {}) } : null };
   }
   /** Apply one board operation (also used by the window's Idea pane). */
   applyBoard(sid: string, op: IdeaBoardOp): IdeaBoardState {

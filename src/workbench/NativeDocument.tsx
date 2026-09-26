@@ -4,7 +4,16 @@ import type { Artifact, Annotation } from "../shared";
 import type { NativeClient } from "../native-client";
 import { PdfViewer, copyText, type PdfSelection } from "./PdfViewer";
 
-type Filter = "all" | "highlights" | "comments" | "open" | "addressed";
+type Filter = "all" | "highlights" | "comments" | "open" | "addressed" | "this idea";
+/** A note's link to an idea, as shown on the note. */
+export interface NoteIdeaLink {
+  ideaId: string;
+  title: string;
+  stance: "supports" | "contradicts" | "refines" | null;
+  onVersion: number;
+  currentVersion: number | null;
+}
+const STANCES = ["supports", "contradicts", "refines"] as const;
 
 /** Immutable source reader. PDFs get the continuous, selectable viewer with
  * highlight/comment/ask actions; text and images keep a simple preview and a
@@ -24,6 +33,10 @@ export function NativeDocument({
   reviewPicked = [],
   onTogglePick,
   onBack,
+  linksOf,
+  focusIdea,
+  onLink,
+  onReviseIdea,
 }: {
   client: NativeClient;
   artifact: Artifact;
@@ -42,6 +55,14 @@ export function NativeDocument({
   onTogglePick?: (id: string) => void;
   /** Leave the paper for the library (Esc, handled by the pane). */
   onBack?: () => void;
+  /** Ideas each note is linked to (with stance). */
+  linksOf?: (noteId: string) => NoteIdeaLink[];
+  /** Literature's focus idea: notes get stance buttons for it. */
+  focusIdea?: { id: string; title: string; version: number } | null;
+  /** Link a note to the focus idea with a stance ("unclassified"), or unlink ("none"). */
+  onLink?: (noteId: string, stance: (typeof STANCES)[number] | "unclassified" | "none") => void;
+  /** Add the note to the focus idea as evidence and open the idea in Ideas. */
+  onReviseIdea?: (noteId: string) => void;
 }) {
   let restored: any = {};
   try {
@@ -126,8 +147,9 @@ export function NativeDocument({
     setCopied(what);
     setTimeout(() => setCopied(""), 1400);
   };
+  const onFocusIdea = (a: Annotation) => !!focusIdea && !!linksOf?.(a.id).some((l) => l.ideaId === focusIdea.id);
   const shown = mine.filter((a) =>
-    filter === "highlights" ? isPlain(a) : filter === "comments" ? !isPlain(a) : filter === "open" ? a.status !== "addressed" : filter === "addressed" ? a.status === "addressed" : true,
+    filter === "this idea" ? onFocusIdea(a) : filter === "highlights" ? isPlain(a) : filter === "comments" ? !isPlain(a) : filter === "open" ? a.status !== "addressed" : filter === "addressed" ? a.status === "addressed" : true,
   );
   const counts: Record<Filter, number> = {
     all: mine.length,
@@ -135,6 +157,7 @@ export function NativeDocument({
     comments: mine.filter((a) => !isPlain(a)).length,
     open: mine.filter((a) => a.status !== "addressed").length,
     addressed: mine.filter((a) => a.status === "addressed").length,
+    "this idea": mine.filter(onFocusIdea).length,
   };
   const markdown = () =>
     `## Notes — ${artifact.name}\n\n` +
@@ -248,7 +271,7 @@ export function NativeDocument({
           </button>
           {notesOpen && mine.length > 0 && (
             <div className="chips" role="tablist" aria-label="Filter notes">
-              {(["all", "highlights", "comments", "open", "addressed"] as Filter[]).map((f) => (
+              {(["all", "highlights", "comments", "open", "addressed", ...(focusIdea ? ["this idea"] : [])] as Filter[]).map((f) => (
                 <button key={f} role="tab" aria-selected={filter === f} className={filter === f ? "on" : ""} onClick={() => setFilter(f)}>
                   {f} {counts[f]}
                 </button>
@@ -310,6 +333,52 @@ export function NativeDocument({
                     {picked && <span className="tag warn">in review</span>}
                   </div>
                   {a.anchor.quote && <blockquote>“{a.anchor.quote}”</blockquote>}
+                  {(() => {
+                    const links = linksOf?.(a.id) ?? [];
+                    const mineLink = focusIdea ? links.find((l) => l.ideaId === focusIdea.id) : undefined;
+                    const others = links.filter((l) => l !== mineLink);
+                    if (!others.length && !focusIdea) return null;
+                    const drift = (l: NoteIdeaLink) => (l.currentVersion && l.currentVersion !== l.onVersion ? `judged on v${l.onVersion}, idea now v${l.currentVersion}` : `judged on v${l.onVersion}`);
+                    return (
+                      <div className="note-ideas" onClick={(e) => e.stopPropagation()}>
+                        {focusIdea && onLink && (
+                          <span className="note-idea-focus" role="group" aria-label={`Stance on ${focusIdea.title}`}>
+                            <span className="t" title={mineLink ? drift(mineLink) : "Not linked to the focus idea yet"}>
+                              {mineLink ? "" : "link: "}
+                              {focusIdea.title || "Untitled idea"}
+                            </span>
+                            {mineLink && mineLink.currentVersion && mineLink.currentVersion !== mineLink.onVersion && (
+                              <span className="v" title={drift(mineLink)}>
+                                v{mineLink.onVersion}→v{mineLink.currentVersion}
+                              </span>
+                            )}
+                            {STANCES.map((st) => (
+                              <button
+                                key={st}
+                                className={`stance stance-${st}`}
+                                aria-pressed={mineLink?.stance === st}
+                                title={mineLink?.stance === st ? "Clear the stance (keep the link)" : `This passage ${st} the idea`}
+                                onClick={() => onLink(a.id, mineLink?.stance === st ? "unclassified" : st)}
+                              >
+                                {st}
+                              </button>
+                            ))}
+                            {mineLink && (
+                              <button className="stance unlink" aria-label={`Unlink from ${focusIdea.title}`} title="Unlink from this idea" onClick={() => onLink(a.id, "none")}>
+                                ×
+                              </button>
+                            )}
+                          </span>
+                        )}
+                        {others.map((l) => (
+                          <span key={l.ideaId} className={`note-idea stance-${l.stance ?? "none"}`} title={drift(l)}>
+                            {l.stance ?? "linked"} · {l.title || "Untitled idea"}
+                            {l.currentVersion && l.currentVersion !== l.onVersion ? ` · v${l.onVersion}→v${l.currentVersion}` : ""}
+                          </span>
+                        ))}
+                      </div>
+                    );
+                  })()}
                   {editing?.id === a.id ? (
                     <form
                       className="note-edit"
@@ -366,6 +435,11 @@ export function NativeDocument({
                       <button onClick={() => void update(a, { status: a.status === "addressed" ? "draft" : "addressed" })}>
                         {a.status === "addressed" ? "Reopen" : "Addressed"}
                       </button>
+                      {focusIdea && onReviseIdea && (
+                        <button onClick={() => onReviseIdea(a.id)} title={`Add this note to “${focusIdea.title}” as evidence and open it in Ideas to revise`}>
+                          Revise idea
+                        </button>
+                      )}
                       {onTogglePick && (
                         <button className={picked ? "on" : ""} onClick={() => onTogglePick(a.id)} title="Include in the next frozen review batch">
                           {picked ? "✓ Review" : "Review"}

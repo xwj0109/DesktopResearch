@@ -151,6 +151,7 @@ export const channels = {
   readTheme: "pi-research:read-theme",
   saveTheme: "pi-research:save-theme",
   themeChanged: "pi-research:theme-changed",
+  fullScreen: "pi-research:full-screen",
   fetchPaper: "pi-research:fetch-paper",
   searchPapers: "pi-research:search-papers",
   terminalOpen: "pi-research:terminal-open",

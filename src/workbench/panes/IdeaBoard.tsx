@@ -4,8 +4,9 @@ import type { Annotation, Artifact } from "../../shared";
 import { ideaSchema, versionInput } from "../../platform";
 import { initialValue, pruneBlankItems } from "../ResearchForm";
 import { PaneLoading, useAction, useResearch } from "../research";
-import type { IdeaBoardOp } from "../../idea-board-contract";
+import { ideaStatus, type IdeaBoardOp } from "../../idea-board-contract";
 import { ACTIVE_IDEA } from "../WorkbenchEvents";
+import { LITERATURE_FOCUS } from "../../workbench-contract";
 
 /** Idea board: brainstorm drafts and saved ideas grouped by status.
  *
@@ -58,6 +59,8 @@ interface Card {
   edited: boolean;
   column: Column;
   reason?: string;
+  /** The decision behind the status (may be on an earlier version: pursue carries). */
+  decision?: ReturnType<typeof ideaStatus>["decision"];
   updated: string;
 }
 
@@ -272,7 +275,7 @@ export function IdeaBoard() {
   const cards: Card[] = [
     ...board.cards.map((d) => ({ key: "d:" + d.key, draft: d, content: d.content, edited: true, column: "brainstorm" as Column, updated: d.updated })),
     ...[...latestById.values()].map((v) => {
-      const d = decisionOf(v);
+      const st = ideaStatus(v, versions, science?.decisions ?? []);
       const edit = board.edits[v.id];
       return {
         key: "r:" + v.id,
@@ -280,8 +283,10 @@ export function IdeaBoard() {
         latest: v,
         content: edit ?? loaded[v.id + v.hash],
         edited: !!edit,
-        column: (d?.decision ?? "decide") as Column,
-        reason: d?.reason,
+        column: (st.status === "to-decide" ? "decide" : st.status) as Column,
+        // A revise/reject answered by a newer version no longer explains the row.
+        reason: st.status === "to-decide" ? undefined : st.decision?.reason,
+        decision: st.decision,
         updated: v.created,
       };
     }),
@@ -294,6 +299,12 @@ export function IdeaBoard() {
   const byColumn = (col: Column) =>
     visible.filter((c) => c.column === col && matches(c)).sort((a, b) => b.updated.localeCompare(a.updated));
 
+  /** Pursued ideas continue in Literature: focus it there and go (step 5). */
+  const workOnInLiterature = (card: Card) => {
+    if (!card.recordId) return;
+    scope.setDraft(LITERATURE_FOCUS, `r:${card.recordId}`);
+    scope.goToStage?.("literature", "sources");
+  };
   /* ── mutations ───────────────────────────────────────────────────── */
   const newIdea = (content = blankIdea()) => {
     if (board.cards.length >= MAX_CARDS) return action.setError(`At most ${MAX_CARDS} draft ideas; save or delete some first.`);
@@ -529,6 +540,7 @@ export function IdeaBoard() {
         onDuplicate={() => duplicate(current)}
         onRemove={() => remove(current)}
         onAsk={() => askPi(current)}
+        onLiterature={current.column === "pursue" && current.recordId ? () => workOnInLiterature(current) : undefined}
         onDecide={(d) => askDecision(current, d)}
         onRestoreVersion={async (v) => {
           const r: any = await scope.client.read(`/science/versions/${v.id}/${v.hash}`);
@@ -576,6 +588,11 @@ export function IdeaBoard() {
                 onClick={() => setMenuFor((m) => (m === card.key ? null : card.key))}
               >
                 ⇢
+              </button>
+            )}
+            {card.column === "pursue" && card.recordId && (
+              <button className="icon-btn" title="Work on in Literature (focus this idea there)" aria-label="Work on in Literature" onClick={() => workOnInLiterature(card)}>
+                ↗
               </button>
             )}
             <button className="icon-btn" title="Ask Pi about this idea" aria-label="Ask Pi" onClick={() => askPi(card)}>
@@ -789,6 +806,7 @@ function IdeaEditor({
   onDuplicate,
   onRemove,
   onAsk,
+  onLiterature,
   onDecide,
   onRestoreVersion,
 }: {
@@ -809,6 +827,8 @@ function IdeaEditor({
   onDuplicate: () => void;
   onRemove: () => void;
   onAsk: () => void;
+  /** Pursued ideas: focus this idea in Literature and go there. */
+  onLiterature?: () => void;
   onDecide: (d: Decision) => void;
   onRestoreVersion: (v: any) => void;
 }) {
@@ -854,7 +874,8 @@ function IdeaEditor({
     });
     setPicking(false);
   };
-  const decision = card.latest ? decisionOf(card.latest) : undefined;
+  const decision = card.decision ?? undefined;
+  const current = card.column === "decide" || card.column === "brainstorm" ? null : card.column;
   const refOptions = [...artifacts.map((a) => ({ id: a.id, hash: a.hash, label: a.name.replace(/\.pdf$/i, "") })), ...(scope.view?.batches ?? []).filter((b: any) => b.annotations.length).map((b: any) => ({ id: b.id, hash: b.hash, label: `Review: ${b.instruction.slice(0, 100)}` }))];
   const known = (id: string) => refOptions.some((o) => o.id === id) || records.some((r) => r.id === id);
 
@@ -879,8 +900,13 @@ function IdeaEditor({
               ? `unsaved changes to v${card.latest!.version}`
               : `saved v${card.latest!.version}`}
         </span>
-        {decision && <span className={`tag ${decision.decision === "pursue" ? "ok" : decision.decision === "reject" ? "warn" : "accent"}`}>{decision.decision}</span>}
+        {current && <span className={`tag ${current === "pursue" ? "ok" : current === "reject" ? "warn" : "accent"}`}>{current}</span>}
         <span className="spacer" />
+        {onLiterature && (
+          <button className="btn small ghost" onClick={onLiterature} title="Focus this idea in Literature and go there">
+            Work on in Literature ↗
+          </button>
+        )}
         <button className="icon-btn" title="Ask Pi about this idea" aria-label="Ask Pi" onClick={onAsk}>
           π
         </button>
@@ -1033,7 +1059,7 @@ function IdeaEditor({
           <>
             <span className="dim">Decide on v{card.latest!.version}:</span>
             {(["pursue", "revise", "reject"] as Decision[]).map((d) => (
-              <button key={d} className={`btn small ${decision?.decision === d ? "primary" : "ghost"}`} onClick={() => onDecide(d)}>
+              <button key={d} className={`btn small ${current === d ? "primary" : "ghost"}`} onClick={() => onDecide(d)}>
                 {d}
               </button>
             ))}
@@ -1044,7 +1070,19 @@ function IdeaEditor({
       {reasonPrompt}
       {decision && (
         <p className="note">
-          Decided <b>{decision.decision}</b> on v{card.latest!.version}: “{decision.reason}”
+          {!decision.carried ? (
+            <>
+              Decided <b>{decision.decision}</b> on v{decision.onVersion}: “{decision.reason}”
+            </>
+          ) : decision.decision === "pursue" ? (
+            <>
+              <b>Pursued</b> since v{decision.onVersion}: “{decision.reason}”. Revisions keep it pursued; decide again to change that.
+            </>
+          ) : (
+            <>
+              Decided <b>{decision.decision}</b> on v{decision.onVersion}: “{decision.reason}”. v{card.latest!.version} answers it and is waiting for a decision.
+            </>
+          )}
         </p>
       )}
       {versions.length > 0 && (

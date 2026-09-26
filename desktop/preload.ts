@@ -16,6 +16,7 @@ const channels = {
   readTheme: "pi-research:read-theme",
   saveTheme: "pi-research:save-theme",
   themeChanged: "pi-research:theme-changed",
+  fullScreen: "pi-research:full-screen",
   fetchPaper: "pi-research:fetch-paper",
   searchPapers: "pi-research:search-papers",
   terminalOpen: "pi-research:terminal-open",
@@ -26,6 +27,11 @@ const channels = {
   terminalTranscript: "pi-research:terminal-transcript",
   terminalHandoff: "pi-research:terminal-handoff",
 } as const;
+// Native full screen hides the macOS window buttons, so the integrated title
+// bar drops the space kept for them (CSS keys off this attribute).
+ipcRenderer.on(channels.fullScreen, (_event, on: unknown) =>
+  document.documentElement.toggleAttribute("data-fullscreen", on === true),
+);
 // Fixed channels only. No invoke/channel, filesystem, Node or arbitrary URL proxy exposed.
 const bridge: DesktopBridge = {
   integratedTitlebar: process.platform === "darwin",

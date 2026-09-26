@@ -24,7 +24,9 @@ test('stage layouts honour the pane contract; Design & Code is Pi / graph / code
   for (const layout of Object.values(stageLayouts)) assert.deepEqual(layout.a, ['pi']);
   assert.deepEqual(stageLayouts.code.b, ['graph']);
   assert.deepEqual(stageLayouts.code.c, ['code']);
-  assert.deepEqual(stageLayouts.research.b, ['sources']);
+  // Research Development: the idea's Pi on the left; its workspace, spec and sources on the right.
+  assert.equal(stageLayouts.research.b, undefined);
+  assert.deepEqual(stageLayouts.research.c, ['files', 'changes', 'documents', 'snapshots', 'spec', 'sources']);
   assert.ok(stageLayouts.ideas.c.includes('sources'));
   assert.equal(activeTab('c', stageLayouts.results, { tabs: { c: 'conclusion' } }), 'conclusion');
   assert.equal(activeTab('c', stageLayouts.results, { tabs: { c: 'graph' } }), 'results', 'foreign tab ignored');

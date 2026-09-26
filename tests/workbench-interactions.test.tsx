@@ -80,11 +80,11 @@ test("splits persist per stage; hiding and zooming keep panes mounted; palette j
   assert.equal(x.pane("Sources").props.hidden, false);
 
   await act(() => x.byLabel("Open command palette").props.onClick());
-  await act(() => x.byLabel("Search commands").props.onChange({ target: { value: "go to bibliography" } }));
+  await act(() => x.byLabel("Search commands").props.onChange({ target: { value: "go to sources" } }));
   const options = x.root.findAllByProps({ role: "option" });
   assert.equal(options.length, 1);
   await act(() => options[0].props.onClick());
-  assert.equal(x.root.findByProps({ id: "pane-tab-bibliography" }).props["aria-selected"], true);
+  assert.equal(x.root.findByProps({ id: "pane-tab-sources" }).props["aria-selected"], true);
   assert.equal(x.root.findAllByProps({ role: "dialog" }).length, 0);
 });
 
@@ -558,4 +558,561 @@ test("Escape returns from a paper after in-reader controls; ⌘⌫ deletes the s
   assert.deepEqual(writes, [["/artifacts/b2/delete", { revision: 7 }]], "⌘⌫ deletes without a confirmation step");
   assert.deepEqual(selected(), ["source-row-c3"], "selection moves to the next source");
   assert.match(text(root.findByProps({ role: "status", className: "notice undo" })), /Deleted Vera-Marun 2026\.pdf/);
+});
+
+test("Literature focus: pick a pursued idea, then sections, keys and new papers apply to it; the overview lists pursued ideas", async (t) => {
+  const { ResearchProvider } = await import("../src/workbench/research");
+  const { SourcesPane } = await import("../src/workbench/panes/SourcesPane");
+  const { researchRequest } = await import("../desktop/research-routes");
+  const paper = (id: string, name: string) => ({ id, name, hash: id.padEnd(64, "0"), bytes: 2048, kind: "pdf", mime: "application/pdf", created: "2026-09-24T10:00:00Z" });
+  const A = "11111111-1111-4111-8111-111111111111", B = "22222222-2222-4222-8222-222222222222";
+  const artifacts = [paper("a1", "Busseti 2016.pdf"), paper("b2", "Vera-Marun 2026.pdf"), paper("c3", "Kardaras 2012.pdf")];
+  const pursued = [
+    {
+      target: `r:${A}`, title: "Kelly with a drawdown cap", version: 3, pursuedOnVersion: 1, reason: "Clean test", pendingEdits: false, ranks: { c3: "primary", a1: "secondary" },
+      coverage: { papers: { primary: 1, secondary: 1, withNotes: 1 }, notes: { supports: 2, contradicts: 0, refines: 1, unclassified: 0, total: 3 }, stale: 0, gaps: [{ code: "no-contradicting", text: "Supporting evidence only: nothing contradicts it yet" }], next: "Look for evidence that could contradict it" },
+    },
+    {
+      target: `r:${B}`, title: "Vol-managed crypto", version: 1, pursuedOnVersion: 1, reason: "Cheap data", pendingEdits: true, ranks: {},
+      coverage: { papers: { primary: 0, secondary: 0, withNotes: 0 }, notes: { supports: 0, contradicts: 0, refines: 0, unclassified: 0, total: 0 }, stale: 0, gaps: [{ code: "no-papers", text: "No primary or secondary papers yet" }, { code: "no-evidence", text: "No evidence noted yet" }], next: "Find papers for this idea" },
+    },
+  ];
+  const writes: any[] = [];
+  const drafts: Record<string, string> = {};
+  let bump = () => {};
+  function Host() {
+    const [, setN] = React.useState(0);
+    bump = () => setN((n) => n + 1);
+    const scope: any = {
+      client: { bytes: () => new Promise(() => {}), read: async () => ({}), write: async (path: string, body: any) => (writes.push([path, body]), body), bridge: {} },
+      portfolio: false, stage: "literature", view: { artifacts, annotations: [], batches: [], importance: { b2: "primary" }, pursued }, loadError: "",
+      refresh: async () => {}, drafts, setDraft: (k: string, v: string) => ((drafts[k] = v), bump()), setComposer() {}, appendComposer() {},
+      companion: { open: [], pinned: [], active: null }, setCompanion() {},
+    };
+    return <ResearchProvider value={scope}><SourcesPane initialMode="library" /></ResearchProvider>;
+  }
+  let renderer: ReturnType<typeof create>;
+  await act(() => { renderer = create(<Host />); });
+  t.after(() => act(() => renderer!.unmount()));
+  const root = renderer!.root;
+  const text = (n: any): string => (typeof n === "string" ? n : (n.children ?? []).map(text).join(""));
+  const host = (n: any) => typeof n.type === "string";
+  const groups = () => root.findAll((n) => n.props.role === "group" && host(n)).map((n) => n.props["aria-label"]);
+  const order = () => root.findAll((n) => n.props.role === "option" && host(n)).map((n) => n.props.id.replace("source-row-", ""));
+  const list = () => root.findByProps({ role: "listbox", "aria-label": "Sources" });
+  const press = (key: string) => act(async () => { const el = list(); el.props.onKeyDown({ key, target: el, currentTarget: el, preventDefault() {}, stopPropagation() {} }); });
+
+  // Overview: pursued ideas with their counts; the library keeps its library-wide sections.
+  const overview = root.findByProps({ role: "list", "aria-label": "Pursued ideas" });
+  assert.match(text(overview), /Kelly with a drawdown cap.*v3.*2 papers · 3 notes: 2 supports, 1 refines.*Look for evidence that could contradict it/);
+  assert.match(text(overview), /Vol-managed crypto.*v1 · edits.*0 papers · 0 notes.*Find papers for this idea/);
+  const tabs = () => root.findAll((n) => n.type === "button" && n.props.role === "tab" && n.parent?.props["aria-label"] === "Literature focus idea").map((n) => [text(n).trim(), n.props["aria-selected"]]);
+  assert.deepEqual(tabs(), [["All ideas 2", true], ["Kelly with a drawdown cap", false], ["Vol-managed crypto", false]]);
+  assert.deepEqual(groups(), ["Primary sources · 1", "Other sources · 2"]);
+
+  // Focus an idea from the overview: its ranks drive the sections.
+  await act(async () => overview.findAll((n) => n.type === "button")[0].props.onClick());
+  assert.equal(drafts["literature:focus"], `r:${A}`);
+  assert.deepEqual(tabs()[1], ["Kelly with a drawdown cap", true]);
+  assert.match(text(root.findByProps({ "aria-label": "Literature focus" })), /v3 · pursued since v1.*“Clean test”.*2 papers · 3 notes.*Next: Look for evidence that could contradict it/, "the focused idea shows its evidence and one next step");
+  assert.deepEqual(groups(), ["Primary sources · 1", "Secondary sources · 1", "Other sources · 1"]);
+  assert.deepEqual(order(), ["c3", "a1", "b2"]);
+
+  // Keys rank for the focus idea, never library-wide.
+  await press("ArrowDown");
+  await press("End");
+  await press("1");
+  assert.deepEqual(writes.at(-1), ["/native/source-importance", { artifactId: "b2", importance: "primary", idea: `r:${A}` }]);
+
+  // Back to the overview via the "All ideas" tab.
+  await act(async () => root.find((n) => n.type === "button" && n.props.role === "tab" && text(n).startsWith("All ideas")).props.onClick());
+  assert.ok(root.findByProps({ role: "list", "aria-label": "Pursued ideas" }));
+
+  // The window may report its focus to agents (desktop allowlist).
+  const sid = "12345678-1234-4234-8234-123456789abc";
+  const ctx = (q: string) => researchRequest({ kind: "strategy", id: sid }, { path: `/api/strategies/${sid}/native/view-context?${q}`, method: "GET", headers: {} });
+  assert.equal(ctx(`active=&page=&idea=&open=&focus=r:${A}`), true);
+  assert.equal(ctx(`active=&page=&idea=&open=&focus=`), true);
+  assert.equal(ctx(`active=&page=&idea=&open=`), true, "older windows without focus still work");
+  assert.equal(ctx(`active=&page=&idea=&open=&focus=d:${A}`), false, "only saved ideas");
+});
+
+test("reading in Literature with a focus: notes get stance buttons for the focus idea, new notes link to it, other links show as chips", async (t) => {
+  const { ResearchProvider } = await import("../src/workbench/research");
+  const { SourcesPane } = await import("../src/workbench/panes/SourcesPane");
+  const { NativeDocument } = await import("../src/workbench/NativeDocument");
+  const A = "11111111-1111-4111-8111-111111111111", B = "22222222-2222-4222-8222-222222222222";
+  const art = { id: "a1", name: "Busseti 2016.pdf", hash: "a".repeat(64), bytes: 2048, kind: "pdf", mime: "application/pdf", created: "2026-09-24T10:00:00Z" };
+  const note = (id: string, quote: string) => ({ id, artifactId: "a1", hash: art.hash, anchor: { page: 2, quote, rotation: 0 }, comment: "Highlight", status: "draft", author: "x", created: "2026-09-24T10:00:00Z", updated: "2026-09-24T10:00:00Z", version: 1 });
+  let annotations = [note("n1", "linear drawdown constraint"), note("n2", "growth optimal")];
+  const pursued = [{ target: `r:${A}`, title: "Kelly with a drawdown cap", version: 3, pursuedOnVersion: 1, reason: "Clean", pendingEdits: false, ranks: {} }];
+  const setDrafts: [string, string][] = [], stages: [string, string | undefined][] = [];
+  const noteLinks: any = { n1: { [A]: { stance: "supports", version: 1, hash: "b".repeat(64), at: "2026-09-24T10:00:00Z" }, [B]: { stance: "contradicts", version: 2, hash: "c".repeat(64), at: "2026-09-24T10:00:00Z" } } };
+  const writes: any[] = [];
+  function Host() {
+    const scope: any = {
+      client: {
+        bytes: () => new Promise(() => {}),
+        read: async () => ({ revision: 4, annotations }),
+        write: async (path: string, body: any) => {
+          writes.push([path, body]);
+          if (path === "/annotations") {
+            annotations = [...annotations, note("n3", body.annotation.anchor.quote)];
+            return { annotations };
+          }
+          return body;
+        },
+        bridge: {},
+      },
+      portfolio: false, stage: "literature", loadError: "",
+      view: { artifacts: [art], annotations, batches: [], pursued, noteLinks, ideaTitles: { [A]: "Kelly with a drawdown cap", [B]: "Vol-managed crypto" }, science: { state: { versions: [{ kind: "idea", id: B, version: 2 }] } } },
+      refresh: async () => {}, drafts: { "literature:focus": `r:${A}` }, setDraft: (k: string, v: string) => setDrafts.push([k, v]), setComposer() {}, appendComposer() {},
+      companion: { open: ["a1"], pinned: [], active: "a1" }, setCompanion() {},
+      goToStage: (s: string, p?: string) => stages.push([s, p]),
+    };
+    return <ResearchProvider value={scope}><SourcesPane initialMode="read" /></ResearchProvider>;
+  }
+  let renderer: ReturnType<typeof create>;
+  await act(() => { renderer = create(<Host />); });
+  t.after(() => act(() => renderer!.unmount()));
+  const root = renderer!.root;
+  const text = (n: any): string => (typeof n === "string" ? n : (n.children ?? []).map(text).join(""));
+  const noteEl = (id: string) => root.find((n) => n.type === "article" && n.props.id === `note-${id}`);
+  const stanceGroup = (id: string) => noteEl(id).find((n) => n.props.role === "group");
+
+  assert.equal(root.find((n) => n.type === "button" && n.props.role === "tab" && n.props["aria-selected"] === true && n.parent?.props["aria-label"] === "Literature focus idea").props.title, "Kelly with a drawdown cap · v3", "the focus stays visible while reading");
+  // n1: supports the focus idea (judged on v1, idea now v3) + a chip for the other idea.
+  const g1 = stanceGroup("n1");
+  assert.match(text(g1), /Kelly with a drawdown capv1→v3/);
+  assert.equal(g1.find((n) => n.type === "button" && text(n) === "supports").props["aria-pressed"], true);
+  assert.match(text(noteEl("n1")), /contradicts · Vol-managed crypto/);
+  // n2: not linked yet; a stance click links it with that stance.
+  assert.match(text(stanceGroup("n2")), /link: Kelly/);
+  await act(async () => stanceGroup("n2").find((n) => n.type === "button" && text(n) === "refines").props.onClick());
+  assert.deepEqual(writes.at(-1), ["/native/note-links", { noteId: "n2", idea: `r:${A}`, stance: "refines" }]);
+  // Clicking the active stance clears it (keeps the link); × unlinks.
+  await act(async () => g1.find((n) => n.type === "button" && text(n) === "supports").props.onClick());
+  assert.deepEqual(writes.at(-1)[1], { noteId: "n1", idea: `r:${A}`, stance: "unclassified" });
+  await act(async () => g1.find((n) => n.props["aria-label"] === "Unlink from Kelly with a drawdown cap").props.onClick());
+  assert.deepEqual(writes.at(-1)[1], { noteId: "n1", idea: `r:${A}`, stance: "none" });
+
+  // "this idea" filter lists the notes linked to the focus idea.
+  const filter = root.find((n) => n.type === "button" && n.props.role === "tab" && text(n).startsWith("this idea"));
+  assert.match(text(filter), /this idea 1/);
+
+  // A new highlight made during the focus is linked to it (stance to be judged).
+  const doc = root.findByType(NativeDocument);
+  await act(async () => { await doc.props.onAnnotate({ artifactId: "a1", anchor: { page: 1, quote: "new passage", rotation: 0 }, comment: "Highlight", status: "draft" }); });
+  assert.deepEqual(writes.slice(-2).map((w) => w[0]), ["/annotations", "/native/note-links"]);
+  assert.deepEqual(writes.at(-1)[1], { noteId: "n3", idea: `r:${A}`, stance: "unclassified" });
+  // Editing an existing note never creates links.
+  const n = writes.length;
+  await act(async () => { await doc.props.onAnnotate({ id: "n2", artifactId: "a1", anchor: { page: 2, quote: "growth optimal", rotation: 0 }, comment: "Edited", status: "draft" }); });
+  assert.deepEqual(writes.slice(n).map((w) => w[0]), ["/annotations"]);
+
+  // "Revise idea": the note goes into the focus idea as an unsaved revision, and Ideas opens it.
+  const revise = noteEl("n1").find((x) => x.type === "button" && text(x) === "Revise idea");
+  await act(async () => {
+    revise.props.onClick();
+    await new Promise((r) => setTimeout(r, 5));
+  });
+  assert.deepEqual(writes.at(-1), ["/native/idea-note", { noteId: "n1", idea: `r:${A}`, show: false }]);
+  assert.deepEqual(setDrafts.at(-1), ["ideas:active", `r:${A}`]);
+  assert.deepEqual(stages.at(-1), ["ideas", "idea"]);
+});
+
+test("Research Development: the bar says which idea is developed; Files, Changes (checkpoint) and Documents read its workspace", async (t) => {
+  const { ResearchProvider } = await import("../src/workbench/research");
+  const { ResearchIdeaBar, FilesPane, ChangesPane, DocumentsPane, developingIdea } = await import("../src/workbench/panes/ResearchDev");
+  const A = "r:11111111-1111-4111-8111-111111111111", B = "r:22222222-2222-4222-8222-222222222222";
+  const pursued = [
+    { target: A, title: "Robust age-invariant Kelly", version: 2, pursuedOnVersion: 1, reason: "Clean test", pendingEdits: false },
+    { target: B, title: "Vol-managed crypto", version: 1, pursuedOnVersion: 1, reason: "Cheap data", pendingEdits: false },
+  ];
+  const files = [
+    { path: "README.md", bytes: 90, modified: "2026-09-25T08:00:00Z", kind: "text", document: true },
+    { path: "report.md", bytes: 40, modified: "2026-09-25T10:00:00Z", kind: "text", document: true },
+    { path: "src/kelly.py", bytes: 50, modified: "2026-09-25T09:00:00Z", kind: "text", document: false },
+    { path: "figs/equity.png", bytes: 5, modified: "2026-09-25T11:00:00Z", kind: "image", document: true },
+  ];
+  const reads: string[] = [], writes: any[] = [];
+  const drafts: Record<string, string> = {};
+  let bump = () => {};
+  function Host() {
+    const [, setN] = React.useState(0);
+    bump = () => setN((n) => n + 1);
+    const scope: any = {
+      client: {
+        read: async (p: string) => {
+          reads.push(p);
+          if (p.startsWith("/native/rd/files")) return { idea: A, files };
+          if (p.startsWith("/native/rd/file?")) {
+            const path = decodeURIComponent(p.split("&path=")[1]);
+            return path.endsWith(".png") ? { path, kind: "image", bytes: 5, mime: "image/png", base64: "iVBORw0K" } : { path, kind: "text", bytes: 10, text: path === "report.md" ? "# Result\n\nGrowth is **linear**." : "def kelly(mu, var):\n    return mu / var\n" };
+          }
+          if (p.startsWith("/native/rd/changes")) return { files: [{ path: "src/kelly.py", status: "M", added: 1, removed: 1, binary: false }], added: 1, removed: 1 };
+          if (p.startsWith("/native/rd/diff")) return { path: "src/kelly.py", diff: "diff --git a/src/kelly.py b/src/kelly.py\n--- a/src/kelly.py\n+++ b/src/kelly.py\n@@ -1,2 +1,2 @@\n def kelly(mu, var):\n-    return mu / var\n+    return min(0.5, mu / var)\n", truncated: false, binary: false };
+          if (p.startsWith("/native/rd/history")) return p.includes("&sha=") ? { sha: "a".repeat(40), files: [{ path: "README.md", status: "A", added: 1, removed: 0, binary: false }], added: 1, removed: 0 } : { checkpoints: [{ sha: "a".repeat(40), at: "2026-09-25T07:00:00Z", message: "Workspace created", stat: "2 files changed" }] };
+          return {};
+        },
+        write: async (p: string, body: any) => (writes.push([p, body]), { sha: "b".repeat(40), at: "2026-09-25T12:00:00Z", message: body.message, stat: "" }),
+        bridge: {},
+      },
+      portfolio: false, stage: "research", loadError: "", view: { artifacts: [], annotations: [], batches: [], pursued },
+      refresh: async () => {}, drafts, setDraft: (k: string, v: string) => ((drafts[k] = v), bump()), setComposer() {}, appendComposer() {},
+      companion: { open: [], pinned: [], active: null }, setCompanion() {},
+    };
+    return (
+      <ResearchProvider value={scope}>
+        <ResearchIdeaBar />
+        <FilesPane />
+        <ChangesPane />
+        <DocumentsPane />
+      </ResearchProvider>
+    );
+  }
+  let renderer: ReturnType<typeof create>;
+  await act(async () => { renderer = create(<Host />); await new Promise((r) => setTimeout(r, 10)); });
+  t.after(() => act(() => renderer!.unmount()));
+  const root = renderer!.root;
+  const text = (n: any): string => (typeof n === "string" ? n : (n.children ?? []).map(text).join(""));
+  const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+
+  // The whole stage states which idea it develops (default: the first pursued idea).
+  assert.equal(developingIdea({ pursued }, {})?.target, A);
+  const bar = root.findByProps({ "aria-label": "Idea in development" });
+  assert.match(text(bar), /developing.*Robust age-invariant Kelly.*Vol-managed crypto.*v2 · pursued since v1/);
+
+  // Files: folders first, README shown by default; clicking a file views it.
+  const tree = root.findByProps({ "aria-label": "Workspace files" });
+  assert.deepEqual(tree.findAll((n) => n.type === "button").map((b) => text(b).trim()), ["▾ figs/", "▧ equity.png", "▾ src/", "λ kelly.py", "≡ README.md", "≡ report.md"]);
+  await act(async () => tree.findAll((n) => n.type === "button").find((b) => text(b).includes("kelly.py"))!.props.onClick());
+  await settle();
+  assert.ok(reads.some((r) => r === `/native/rd/file?idea=${A}&path=src%2Fkelly.py`));
+
+  // Changes: files with counts, the selected file's diff, and recording a checkpoint.
+  assert.match(text(root.findByProps({ className: "summary" })), /1 file · \+1 −1 since “Workspace created”/);
+  assert.match(text(root.findByProps({ "aria-label": "Changed files" })), /src\/.*M.*kelly\.py.*\+1.*−1/);
+  assert.match(text(root.findByProps({ className: "chg-lines" })), /-    return mu \/ var.*\+    return min\(0\.5, mu \/ var\)/);
+  const input = root.findByProps({ "aria-label": "Checkpoint message" });
+  await act(async () => input.props.onChange({ target: { value: "Cap the Kelly fraction" } }));
+  await act(async () => { root.findByProps({ className: "rd-checkpoint" }).props.onSubmit({ preventDefault() {} }); await new Promise((r) => setTimeout(r, 10)); });
+  assert.deepEqual(writes.at(-1), ["/native/rd/checkpoint", { idea: A, message: "Cap the Kelly fraction" }]);
+
+  // Documents: produced documents, newest first (README excluded); the newest is shown.
+  const docs = root.findByProps({ "aria-label": "Documents" });
+  assert.deepEqual(docs.findAll((n) => n.type === "button").map((b) => b.props.title), ["figs/equity.png", "report.md"]);
+
+  // Choosing another idea switches every pane to its workspace.
+  await act(async () => root.findByProps({ "aria-label": "Idea to develop" }).findAll((n) => n.type === "button")[1].props.onClick());
+  assert.equal(drafts["research:idea"], B);
+  await settle();
+  assert.ok(reads.some((r) => r === `/native/rd/files?idea=${B}`));
+});
+
+test("Research Development Data tab: snapshots with a chart and table, fetching in the background with progress and cancel", async (t) => {
+  const { ResearchProvider } = await import("../src/workbench/research");
+  const { DataSnapshotsPane } = await import("../src/workbench/panes/DataSnapshots");
+  const snap = { name: "binance-btcusdt-1m-2024-01-01-2024-12-31", title: "binance BTCUSDT 1m 2024", file: "binance-btcusdt-1m-2024-01-01-2024-12-31.parquet", format: "parquet", source: { kind: "binance", symbol: "BTCUSDT", interval: "1m" }, query: { start: "2024-01-01", end: "2024-12-31" }, createdAt: "2026-09-25T10:00:00Z", rows: 527040, columns: ["time", "open", "high", "low", "close", "volume"], first: "2024-01-01T00:00:00.000Z", last: "2024-12-31T23:59:00.000Z", bytes: 21_000_000, sha256: "c".repeat(64) };
+  const row = (i: number) => [`2024-01-01T00:0${i}:00.000Z`, "100", "101", "99", String(100 + i), "5"];
+  const preview = { ...snap, preview: { head: Array.from({ length: 20 }, (_, i) => row(i % 10)), tail: Array.from({ length: 20 }, (_, i) => row(i % 10)), series: [["2024-01-01", 42000], ["2024-06-01", 67000], ["2024-12-31", 93000]], valueColumn: "close" } };
+  let jobs: any[] = [];
+  const writes: any[] = [];
+  function Host() {
+    const scope: any = {
+      client: {
+        read: async (p: string) => (p === "/native/data/snapshots" ? { snapshots: [snap] } : p === "/native/data/jobs" ? { jobs } : p.startsWith("/native/data/preview") ? preview : {}),
+        write: async (p: string, body: any) => {
+          writes.push([p, body]);
+          if (p === "/native/data/fetch") jobs = [{ id: "j1", title: "binance ETHUSDT 1m", status: "running", rows: 120000, progress: 0.4, message: "Fetched 120,000 bars, up to 2024-03-12" }];
+          return {};
+        },
+        bridge: {},
+      },
+      portfolio: false, stage: "research", loadError: "", view: { artifacts: [], annotations: [], batches: [], pursued: [{ target: "r:11111111-1111-4111-8111-111111111111", title: "Kelly", version: 1, pursuedOnVersion: 1, reason: "x", pendingEdits: false }] },
+      refresh: async () => {}, drafts: {}, setDraft() {}, setComposer() {}, appendComposer() {},
+      companion: { open: [], pinned: [], active: null }, setCompanion() {},
+    };
+    return <ResearchProvider value={scope}><DataSnapshotsPane /></ResearchProvider>;
+  }
+  let renderer: ReturnType<typeof create>;
+  await act(async () => { renderer = create(<Host />); await new Promise((r) => setTimeout(r, 20)); });
+  t.after(() => act(() => renderer!.unmount()));
+  const root = renderer!.root;
+  const text = (n: any): string => (typeof n === "string" ? n : (n.children ?? []).map(text).join(""));
+
+  assert.match(text(root.findByProps({ "aria-label": "Data snapshots" })), /binance BTCUSDT 1m 2024.*binance BTCUSDT · 1m · 527,040 rows/);
+  const detail = root.findByProps({ className: "rd-viewer-body data-detail" });
+  assert.match(text(detail), /527,040.*2024-01-01 00:00 → 2024-12-31 23:59.*time, open, high, low, close, volume.*data\/binance-btcusdt-1m-2024-01-01-2024-12-31\.parquet · 20\.0 MiB/);
+  assert.match(text(detail), /pl\.read_parquet\("data\/binance-btcusdt-1m-2024-01-01-2024-12-31\.parquet"\)/);
+  const { polarsSnippet } = await import("../src/workbench/panes/DataSnapshots");
+  assert.equal(polarsSnippet({ file: "binance-um-trades-btcusdt-2025-01-01-2025-01-31/" }), 'pl.scan_parquet("data/binance-um-trades-btcusdt-2025-01-01-2025-01-31/*.parquet")', "tick folders are scanned lazily");
+  assert.ok(root.findByProps({ className: "line" }).props.d.startsWith("M"), "the series is charted");
+  assert.match(text(detail), /… 527,024 more rows …/, "first and last rows as a table");
+
+  // Fetch in the background (bars via the API here; the archive is the default source).
+  await act(async () => root.findAll((n) => n.type === "button" && text(n) === "+ Fetch data")[0].props.onClick());
+  const form = root.findByProps({ "aria-label": "Fetch data" });
+  assert.equal(form.findAll((n) => n.type === "select")[0].props.value, "binance-archive", "tick-level archive is the default");
+  await act(async () => form.findAll((n) => n.type === "select")[0].props.onChange({ target: { value: "binance" } }));
+  await act(async () => form.findAll((n) => n.type === "input")[0].props.onChange({ target: { value: "ethusdt" } }));
+  await act(async () => { await form.props.onSubmit({ preventDefault() {} }); await new Promise((r) => setTimeout(r, 20)); });
+  assert.equal(writes[0][0], "/native/data/fetch");
+  assert.deepEqual({ ...writes[0][1], start: "x", end: "x" }, { source: "binance", symbol: "ETHUSDT", interval: "1m", start: "x", end: "x" });
+  const job = root.findByProps({ "aria-label": "Fetches" });
+  assert.match(text(job), /binance ETHUSDT 1m.*Fetched 120,000 bars, up to 2024-03-12/);
+  await act(async () => job.findAll((n) => n.type === "button" && text(n) === "Cancel")[0].props.onClick());
+  assert.deepEqual(writes.at(-1), ["/native/data/cancel", { job: "j1" }]);
+});
+
+test("the fetch form suggests tickers as you type (from what the chosen market and dataset hold)", async (t) => {
+  const { ResearchProvider } = await import("../src/workbench/research");
+  const { DataSnapshotsPane } = await import("../src/workbench/panes/DataSnapshots");
+  const reads: string[] = [];
+  function Host() {
+    const scope: any = {
+      client: {
+        read: async (p: string) => {
+          reads.push(p);
+          if (p.startsWith("/native/data/symbols")) {
+            const q = decodeURIComponent(/q=([^&]*)/.exec(p)![1]);
+            const all = ["SOLUSDT", "SOLUSDC", "SOLBTC", "BTCUSDT"].filter((s) => s.startsWith(q));
+            return { symbols: all.map((symbol) => ({ symbol })), total: 1234 };
+          }
+          if (p.startsWith("/native/data/estimate")) return { files: 1, bytes: 1e6, missingCount: 0, freeBytes: 1e12, first: "2025-01-01", last: "2025-01-01" };
+          return p === "/native/data/snapshots" ? { snapshots: [] } : { jobs: [] };
+        },
+        write: async () => ({}),
+        bridge: {},
+      },
+      portfolio: false, stage: "research", loadError: "", view: { artifacts: [], annotations: [], batches: [], pursued: [] },
+      refresh: async () => {}, drafts: {}, setDraft() {}, setComposer() {}, appendComposer() {}, companion: { open: [], pinned: [], active: null }, setCompanion() {},
+    };
+    return <ResearchProvider value={scope}><DataSnapshotsPane /></ResearchProvider>;
+  }
+  let renderer: ReturnType<typeof create>;
+  await act(async () => { renderer = create(<Host />); await new Promise((r) => setTimeout(r, 10)); });
+  t.after(() => act(() => renderer!.unmount()));
+  const root = renderer!.root;
+  const text = (n: any): string => (typeof n === "string" ? n : (n.children ?? []).map(text).join(""));
+  await act(async () => root.findAll((n) => n.type === "button" && text(n) === "+ Fetch data")[0].props.onClick());
+  const input = () => root.findByProps({ role: "combobox" });
+  await act(async () => { input().props.onFocus(); });
+  await act(async () => { input().props.onChange({ target: { value: "sol" } }); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 250)); });
+  assert.ok(reads.some((r) => r === "/native/data/symbols?source=binance-archive&q=SOL&market=um&dataset=trades"), `asks for the chosen market and dataset: ${reads.filter((r) => r.includes("symbols")).join(" ")}`);
+  const list = () => root.findByProps({ role: "listbox", "aria-label": "Ticker suggestions" });
+  assert.deepEqual(list().findAll((n) => n.props.role === "option").map((o) => text(o)), ["SOLUSDT", "SOLUSDC", "SOLBTC"]);
+  assert.match(text(list()), /1,234 tickers/);
+  await act(async () => input().props.onKeyDown({ key: "ArrowDown", preventDefault() {} }));
+  await act(async () => input().props.onKeyDown({ key: "Enter", preventDefault() {} }));
+  assert.equal(input().props.value, "SOLUSDC", "↓ then Enter picks the second suggestion");
+  assert.equal(root.findAll((n) => n.props.role === "listbox" && n.props["aria-label"] === "Ticker suggestions").length, 0, "the list closes");
+});
+
+test("deleting a data snapshot asks first, shows the code that reads it, and frees the space", async (t) => {
+  const { ResearchProvider } = await import("../src/workbench/research");
+  const { DataSnapshotsPane } = await import("../src/workbench/panes/DataSnapshots");
+  const A = "r:11111111-1111-4111-8111-111111111111";
+  let snaps = [
+    { name: "ticks", title: "DOGE ticks", file: "ticks/", format: "parquet", source: { kind: "binance-archive", market: "spot", dataset: "trades", symbol: "DOGEUSDT" }, createdAt: "2026-09-25T10:00:00Z", rows: 2620129, columns: ["id", "price"], bytes: 15_500_000, sha256: "a".repeat(64), files: 1 },
+    { name: "fred", title: "DGS10", file: "fred.parquet", format: "parquet", source: { kind: "fred", symbol: "DGS10" }, createdAt: "2026-09-24T10:00:00Z", rows: 259, columns: ["date", "value"], bytes: 1000, sha256: "b".repeat(64) },
+  ];
+  const writes: any[] = [];
+  function Host() {
+    const scope: any = {
+      client: {
+        read: async (p: string) =>
+          p === "/native/data/snapshots" ? { snapshots: snaps } : p === "/native/data/jobs" ? { jobs: [] } : p.startsWith("/native/data/preview?name=") ? { ...snaps.find((s) => s.name === p.split("=")[1]), references: p.endsWith("=ticks") ? [{ idea: A, path: "src/fit.py" }] : [] } : {},
+        write: async (p: string, body: any) => {
+          writes.push([p, body]);
+          snaps = snaps.filter((s) => s.name !== body.name);
+          return { deleted: body.name, bytes: 15_500_000, references: [] };
+        },
+        bridge: {},
+      },
+      portfolio: false, stage: "research", loadError: "", view: { artifacts: [], annotations: [], batches: [], pursued: [{ target: A, title: "Microstructure", version: 1, pursuedOnVersion: 1, reason: "x", pendingEdits: false }] },
+      refresh: async () => {}, drafts: {}, setDraft() {}, setComposer() {}, appendComposer() {}, companion: { open: [], pinned: [], active: null }, setCompanion() {},
+    };
+    return <ResearchProvider value={scope}><DataSnapshotsPane /></ResearchProvider>;
+  }
+  let renderer: ReturnType<typeof create>;
+  await act(async () => { renderer = create(<Host />); await new Promise((r) => setTimeout(r, 20)); });
+  t.after(() => act(() => renderer!.unmount()));
+  const root = renderer!.root;
+  const text = (n: any): string => (typeof n === "string" ? n : (n.children ?? []).map(text).join(""));
+  // ⌘⌫ in the list opens the confirmation (never deletes directly).
+  await act(async () => { root.findByProps({ "aria-label": "Data snapshots" }).props.onKeyDown({ metaKey: true, key: "Backspace", preventDefault() {} }); await new Promise((r) => setTimeout(r, 20)); });
+  const confirm = root.findByProps({ role: "alertdialog" });
+  assert.match(text(confirm), /Delete “DOGE ticks” for good\? Frees 14\.8 MiB/);
+  assert.match(text(confirm), /Code that reads it will stop working:.*Microstructure · src\/fit\.py/);
+  assert.equal(writes.length, 0);
+  await act(async () => { confirm.findAll((n) => n.type === "button" && text(n) === "Delete for good")[0].props.onClick(); await new Promise((r) => setTimeout(r, 20)); });
+  assert.deepEqual(writes, [["/native/data/delete", { name: "ticks" }]]);
+  assert.match(text(root.findByProps({ role: "status" })), /Deleted “DOGE ticks” · freed 14\.8 MiB/);
+  assert.deepEqual(root.findByProps({ "aria-label": "Data snapshots" }).findAll((n) => n.type === "button").map((b) => b.props.title), ["fred.parquet"], "the next snapshot is selected");
+  // Cancel keeps it.
+  await act(async () => { root.findAll((n) => n.type === "button" && text(n) === "Delete…")[0].props.onClick(); await new Promise((r) => setTimeout(r, 20)); });
+  assert.match(text(root.findByProps({ role: "alertdialog" })), /No code in the idea workspaces mentions data\/fred\.parquet/);
+  await act(async () => root.findByProps({ role: "alertdialog" }).findAll((n) => n.type === "button" && text(n) === "Cancel")[0].props.onClick());
+  assert.equal(root.findAll((n) => n.props.role === "alertdialog").length, 0);
+  assert.equal(writes.length, 1);
+});
+
+test("Changes: many files grouped by folder with counts; one file's diff at a time; past checkpoints from the selector", async (t) => {
+  const { ResearchProvider } = await import("../src/workbench/research");
+  const { ChangesPane } = await import("../src/workbench/panes/ResearchDev");
+  const files = [
+    { path: ".gitignore", status: "M", added: 1, removed: 0, binary: false },
+    { path: "analysis/oos_paths.csv", status: "A", added: 120000, removed: 0, binary: false },
+    { path: "analysis/equity.png", status: "A", added: 0, removed: 0, binary: true },
+    { path: "analysis/report.md", status: "A", added: 40, removed: 0, binary: false },
+    { path: "walkforward.py", status: "A", added: 300, removed: 0, binary: false },
+  ];
+  const reads: string[] = [];
+  function Host() {
+    const scope: any = {
+      client: {
+        read: async (p: string) => {
+          reads.push(p);
+          if (p.startsWith("/native/rd/changes")) return { files, added: 120341, removed: 0 };
+          if (p.startsWith("/native/rd/diff")) {
+            const path = decodeURIComponent(/path=([^&]+)/.exec(p)![1]);
+            return { path, diff: `diff --git a/${path} b/${path}\n@@ -0,0 +1 @@\n+line of ${path}\n`, truncated: path.endsWith(".csv"), binary: false };
+          }
+          if (p.startsWith("/native/rd/file")) return { path: "analysis/equity.png", kind: "image", mime: "image/png", base64: "iVBORw0K" };
+          if (p.includes("&sha=")) return { sha: "a".repeat(40), files: [{ path: "README.md", status: "A", added: 3, removed: 0, binary: false }], added: 3, removed: 0 };
+          return { checkpoints: [{ sha: "a".repeat(40), at: "2026-09-25T07:00:00Z", message: "Workspace created", stat: "" }] };
+        },
+        write: async () => ({}),
+        bridge: {},
+      },
+      portfolio: false, stage: "research", loadError: "", view: { pursued: [{ target: "r:11111111-1111-4111-8111-111111111111", title: "K", version: 1, pursuedOnVersion: 1, reason: "x", pendingEdits: false }] },
+      refresh: async () => {}, drafts: {}, setDraft() {}, setComposer() {}, appendComposer() {}, companion: { open: [], pinned: [], active: null }, setCompanion() {},
+    };
+    return <ResearchProvider value={scope}><ChangesPane /></ResearchProvider>;
+  }
+  let renderer: ReturnType<typeof create>;
+  await act(async () => { renderer = create(<Host />); await new Promise((r) => setTimeout(r, 20)); });
+  t.after(() => act(() => renderer!.unmount()));
+  const root = renderer!.root;
+  const text = (n: any): string => (typeof n === "string" ? n : (n.children ?? []).map(text).join(""));
+  const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+  assert.match(text(root.findByProps({ className: "summary" })), /5 files · \+120,341 −0 since “Workspace created”/);
+  const list = () => root.findByProps({ "aria-label": "Changed files" });
+  const buttons = () => list().findAll((n) => n.type === "button").map((b) => text(b).replace(/\s+/g, " ").trim());
+  assert.deepEqual(buttons(), ["▾ analysis/ 3", "Aoos_paths.csv+120000", "Aequity.pngbin", "Areport.md+40", "M.gitignore+1", "Awalkforward.py+300"], "folders first, with status letters and counts");
+  // The first file's diff is shown (capped per file); others load one at a time.
+  assert.match(text(root.findByProps({ className: "chg-lines" })), /\+line of analysis\/oos_paths\.csv/);
+  assert.match(text(root.findByProps({ className: "rd-viewer chg-diff" })), /Showing the first 512 KiB of this file's diff/);
+  await act(async () => list().findAll((n) => n.type === "button").find((b) => text(b).includes("walkforward.py"))!.props.onClick());
+  await settle();
+  assert.match(text(root.findByProps({ className: "chg-lines" })), /\+line of walkforward\.py/);
+  assert.ok(!reads.some((r) => r.includes("path=analysis%2Freport.md")), "unselected files are never fetched");
+  // Images show as images.
+  await act(async () => list().findAll((n) => n.type === "button").find((b) => text(b).includes("equity.png"))!.props.onClick());
+  await settle();
+  assert.equal(root.findByProps({ className: "rd-image" }).props.src, "data:image/png;base64,iVBORw0K");
+  // Folders fold.
+  await act(async () => list().findAll((n) => n.type === "button")[0].props.onClick());
+  assert.deepEqual(buttons(), ["▸ analysis/ 3", "M.gitignore+1", "Awalkforward.py+300"]);
+  // A past checkpoint: its files, no checkpoint form.
+  await act(async () => { root.findByProps({ "aria-label": "Showing" }).props.onChange({ target: { value: "a".repeat(40) } }); await new Promise((r) => setTimeout(r, 20)); });
+  assert.deepEqual(buttons(), ["AREADME.md+3"]);
+  assert.equal(root.findAll((n) => n.props["aria-label"] === "Checkpoint message").length, 0);
+  assert.ok(reads.some((r) => r.includes("/native/rd/diff?") && r.includes("path=README.md") && r.endsWith(`&sha=${"a".repeat(40)}`)));
+});
+
+test("the fetch form suggests tickers as you type (from what the chosen market and dataset hold)", async (t) => {
+  const { ResearchProvider } = await import("../src/workbench/research");
+  const { DataSnapshotsPane } = await import("../src/workbench/panes/DataSnapshots");
+  const reads: string[] = [];
+  function Host() {
+    const scope: any = {
+      client: {
+        read: async (p: string) => {
+          reads.push(p);
+          if (p.startsWith("/native/data/symbols")) {
+            const q = decodeURIComponent(/q=([^&]*)/.exec(p)![1]);
+            const all = ["SOLUSDT", "SOLUSDC", "SOLBTC", "BTCUSDT"].filter((s) => s.startsWith(q));
+            return { symbols: all.map((symbol) => ({ symbol })), total: 1234 };
+          }
+          if (p.startsWith("/native/data/estimate")) return { files: 1, bytes: 1e6, missingCount: 0, freeBytes: 1e12, first: "2025-01-01", last: "2025-01-01" };
+          return p === "/native/data/snapshots" ? { snapshots: [] } : { jobs: [] };
+        },
+        write: async () => ({}),
+        bridge: {},
+      },
+      portfolio: false, stage: "research", loadError: "", view: { artifacts: [], annotations: [], batches: [], pursued: [] },
+      refresh: async () => {}, drafts: {}, setDraft() {}, setComposer() {}, appendComposer() {}, companion: { open: [], pinned: [], active: null }, setCompanion() {},
+    };
+    return <ResearchProvider value={scope}><DataSnapshotsPane /></ResearchProvider>;
+  }
+  let renderer: ReturnType<typeof create>;
+  await act(async () => { renderer = create(<Host />); await new Promise((r) => setTimeout(r, 10)); });
+  t.after(() => act(() => renderer!.unmount()));
+  const root = renderer!.root;
+  const text = (n: any): string => (typeof n === "string" ? n : (n.children ?? []).map(text).join(""));
+  await act(async () => root.findAll((n) => n.type === "button" && text(n) === "+ Fetch data")[0].props.onClick());
+  const input = () => root.findByProps({ role: "combobox" });
+  await act(async () => { input().props.onFocus(); });
+  await act(async () => { input().props.onChange({ target: { value: "sol" } }); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 250)); });
+  assert.ok(reads.some((r) => r === "/native/data/symbols?source=binance-archive&q=SOL&market=um&dataset=trades"), `asks for the chosen market and dataset: ${reads.filter((r) => r.includes("symbols")).join(" ")}`);
+  const list = () => root.findByProps({ role: "listbox", "aria-label": "Ticker suggestions" });
+  assert.deepEqual(list().findAll((n) => n.props.role === "option").map((o) => text(o)), ["SOLUSDT", "SOLUSDC", "SOLBTC"]);
+  assert.match(text(list()), /1,234 tickers/);
+  await act(async () => input().props.onKeyDown({ key: "ArrowDown", preventDefault() {} }));
+  await act(async () => input().props.onKeyDown({ key: "Enter", preventDefault() {} }));
+  assert.equal(input().props.value, "SOLUSDC", "↓ then Enter picks the second suggestion");
+  assert.equal(root.findAll((n) => n.props.role === "listbox" && n.props["aria-label"] === "Ticker suggestions").length, 0, "the list closes");
+});
+
+test("deleting a data snapshot asks first, shows the code that reads it, and frees the space", async (t) => {
+  const { ResearchProvider } = await import("../src/workbench/research");
+  const { DataSnapshotsPane } = await import("../src/workbench/panes/DataSnapshots");
+  const A = "r:11111111-1111-4111-8111-111111111111";
+  let snaps = [
+    { name: "ticks", title: "DOGE ticks", file: "ticks/", format: "parquet", source: { kind: "binance-archive", market: "spot", dataset: "trades", symbol: "DOGEUSDT" }, createdAt: "2026-09-25T10:00:00Z", rows: 2620129, columns: ["id", "price"], bytes: 15_500_000, sha256: "a".repeat(64), files: 1 },
+    { name: "fred", title: "DGS10", file: "fred.parquet", format: "parquet", source: { kind: "fred", symbol: "DGS10" }, createdAt: "2026-09-24T10:00:00Z", rows: 259, columns: ["date", "value"], bytes: 1000, sha256: "b".repeat(64) },
+  ];
+  const writes: any[] = [];
+  function Host() {
+    const scope: any = {
+      client: {
+        read: async (p: string) =>
+          p === "/native/data/snapshots" ? { snapshots: snaps } : p === "/native/data/jobs" ? { jobs: [] } : p.startsWith("/native/data/preview?name=") ? { ...snaps.find((s) => s.name === p.split("=")[1]), references: p.endsWith("=ticks") ? [{ idea: A, path: "src/fit.py" }] : [] } : {},
+        write: async (p: string, body: any) => {
+          writes.push([p, body]);
+          snaps = snaps.filter((s) => s.name !== body.name);
+          return { deleted: body.name, bytes: 15_500_000, references: [] };
+        },
+        bridge: {},
+      },
+      portfolio: false, stage: "research", loadError: "", view: { artifacts: [], annotations: [], batches: [], pursued: [{ target: A, title: "Microstructure", version: 1, pursuedOnVersion: 1, reason: "x", pendingEdits: false }] },
+      refresh: async () => {}, drafts: {}, setDraft() {}, setComposer() {}, appendComposer() {}, companion: { open: [], pinned: [], active: null }, setCompanion() {},
+    };
+    return <ResearchProvider value={scope}><DataSnapshotsPane /></ResearchProvider>;
+  }
+  let renderer: ReturnType<typeof create>;
+  await act(async () => { renderer = create(<Host />); await new Promise((r) => setTimeout(r, 20)); });
+  t.after(() => act(() => renderer!.unmount()));
+  const root = renderer!.root;
+  const text = (n: any): string => (typeof n === "string" ? n : (n.children ?? []).map(text).join(""));
+  // ⌘⌫ in the list opens the confirmation (never deletes directly).
+  await act(async () => { root.findByProps({ "aria-label": "Data snapshots" }).props.onKeyDown({ metaKey: true, key: "Backspace", preventDefault() {} }); await new Promise((r) => setTimeout(r, 20)); });
+  const confirm = root.findByProps({ role: "alertdialog" });
+  assert.match(text(confirm), /Delete “DOGE ticks” for good\? Frees 14\.8 MiB/);
+  assert.match(text(confirm), /Code that reads it will stop working:.*Microstructure · src\/fit\.py/);
+  assert.equal(writes.length, 0);
+  await act(async () => { confirm.findAll((n) => n.type === "button" && text(n) === "Delete for good")[0].props.onClick(); await new Promise((r) => setTimeout(r, 20)); });
+  assert.deepEqual(writes, [["/native/data/delete", { name: "ticks" }]]);
+  assert.match(text(root.findByProps({ role: "status" })), /Deleted “DOGE ticks” · freed 14\.8 MiB/);
+  assert.deepEqual(root.findByProps({ "aria-label": "Data snapshots" }).findAll((n) => n.type === "button").map((b) => b.props.title), ["fred.parquet"], "the next snapshot is selected");
+  // Cancel keeps it.
+  await act(async () => { root.findAll((n) => n.type === "button" && text(n) === "Delete…")[0].props.onClick(); await new Promise((r) => setTimeout(r, 20)); });
+  assert.match(text(root.findByProps({ role: "alertdialog" })), /No code in the idea workspaces mentions data\/fred\.parquet/);
+  await act(async () => root.findByProps({ role: "alertdialog" }).findAll((n) => n.type === "button" && text(n) === "Cancel")[0].props.onClick());
+  assert.equal(root.findAll((n) => n.props.role === "alertdialog").length, 0);
+  assert.equal(writes.length, 1);
 });

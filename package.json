@@ -25,6 +25,8 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "express": "5.1.0",
+    "hyparquet": "^1.31.1",
+    "hyparquet-writer": "^0.16.10",
     "katex": "^0.16.47",
     "node-pty": "^1.1.0",
     "pdfjs-dist": "5.4.624",

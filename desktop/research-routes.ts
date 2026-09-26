@@ -1,6 +1,9 @@
 import { reviewMutationSchemas, reviewPrepareSchema } from "../src/review-contract.ts";
 import { ideaBoardOpSchema } from "../src/idea-board-contract.ts";
 import { sourceImportanceSchema } from "../src/source-importance-contract.ts";
+import { ideaAddNoteSchema, noteLinkInputSchema } from "../src/note-link-contract.ts";
+import { productionCommitInputSchema } from "../src/production-contract.ts";
+import { feedCreateSchema, feedDeleteSchema, feedServiceSchema, feedUpdateSchema } from "../src/feed-contract.ts";
 import { recoverySchema } from "../src/recovery-contract.ts";
 import { z } from "zod";
 import type { Scope, LabRequest } from "./contracts.ts";
@@ -51,13 +54,50 @@ export function researchRequest(scope: Scope, request: LabRequest): boolean {
     if (new RegExp(`^/native/view-events\\?after=-?\\d{1,12}$`).test(tail)) read = true;
     else if (
       new RegExp(
-        `^/native/view-context\\?active=(${uuid})?&page=\\d{0,6}&idea=((d|r):${uuid})?&open=(${uuid}(,${uuid}){0,11})?$`,
+        `^/native/view-context\\?active=(${uuid})?&page=\\d{0,6}&idea=((d|r):${uuid})?&open=(${uuid}(,${uuid}){0,11})?(&focus=(r:${uuid})?)?(&develop=(r:${uuid})?)?$`,
       ).test(tail)
     )
       read = true;
     else if (tail.startsWith("/native/reviews/")) schema = reviewMutationSchemas[tail.slice("/native/reviews/".length) as keyof typeof reviewMutationSchemas];
     else if (tail === "/native/ideas") schema = ideaBoardOpSchema;
     else if (tail === "/native/source-importance") schema = sourceImportanceSchema;
+    else if (tail === "/native/note-links") schema = noteLinkInputSchema;
+    else if (tail === "/native/idea-note") schema = ideaAddNoteSchema;
+    else if (tail === "/native/production/commit") schema = productionCommitInputSchema;
+    else if (tail === "/native/feeds") read = true;
+    else if (/^\/native\/feeds\/(rows\?id=[a-z0-9-]{1,80}|partitions\?id=[a-z0-9-]{1,80}(&limit=\d{1,4})?)$/.test(tail)) read = true;
+    else if (tail === "/native/feeds/create") schema = feedCreateSchema;
+    else if (tail === "/native/feeds/update") schema = feedUpdateSchema;
+    else if (tail === "/native/feeds/delete") schema = feedDeleteSchema;
+    else if (tail === "/native/feeds/service") schema = feedServiceSchema;
+    else if (new RegExp(`^/native/production/preview\\?idea=r:${uuid}$`).test(tail)) read = true;
+    else if (new RegExp(`^/native/rd/(files|changes)\\?idea=r:${uuid}$`).test(tail)) read = true;
+    else if (new RegExp(`^/native/rd/history\\?idea=r:${uuid}(&sha=[0-9a-f]{7,40})?$`).test(tail)) read = true;
+    else if (new RegExp(`^/native/rd/file\\?idea=r:${uuid}&path=[^&#]{1,1500}$`).test(tail)) read = true;
+    else if (new RegExp(`^/native/rd/diff\\?idea=r:${uuid}&path=[^&#]{1,1500}(&sha=[0-9a-f]{7,40})?$`).test(tail)) read = true;
+    else if (tail === "/native/data/snapshots" || tail === "/native/data/jobs") read = true;
+    else if (/^\/native\/data\/preview\?name=[a-z0-9-]{1,120}$/.test(tail)) read = true;
+    else if (/^\/native\/data\/symbols\?source=(binance-archive|binance|coinbase|fred)&q=[A-Za-z0-9_.%-]{0,60}(&market=(spot|um|cm|option)&dataset=[A-Za-z]{1,40})?$/.test(tail)) read = true;
+    else if (/^\/native\/data\/estimate\?market=(spot|um|cm|option)&dataset=[A-Za-z]{1,40}&symbol=[A-Z0-9_]{3,30}(&interval=[0-9a-z]{1,4})?&start=\d{4}-\d{2}-\d{2}&end=\d{4}-\d{2}-\d{2}$/.test(tail)) read = true;
+    else if (tail === "/native/data/fetch")
+      schema = z
+        .object({
+          source: z.enum(["binance", "coinbase", "fred", "binance-archive"]),
+          symbol: z.string().trim().min(1).max(40),
+          interval: z.string().max(4).optional(),
+          market: z.enum(["spot", "um", "cm", "option"]).optional(),
+          dataset: z.string().max(40).optional(),
+          start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+          end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+          title: z.string().max(200).optional(),
+        })
+        .strict();
+    else if (tail === "/native/data/cancel") schema = z.object({ job: z.uuid() }).strict();
+    else if (tail === "/native/data/delete") schema = z.object({ name: z.string().regex(/^[a-z0-9-]{1,120}$/) }).strict();
+    else if (tail === "/native/data/register")
+      schema = z.object({ idea: z.string().regex(/^r:[0-9a-f-]{36}$/), path: z.string().min(1).max(500), title: z.string().trim().min(1).max(200), note: z.string().max(2000).optional() }).strict();
+    else if (tail === "/native/rd/checkpoint")
+      schema = z.object({ idea: z.string().regex(/^r:[0-9a-f-]{36}$/), message: z.string().trim().min(1).max(500) }).strict();
     else if (tail === "/native/mcp-access") {
       if (request.method === "GET") read = true;
       else schema = z.object({ enabled: z.boolean() }).strict();

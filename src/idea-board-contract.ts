@@ -56,3 +56,26 @@ export const ideaBoardOpSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("adopt"), board: ideaBoardSchema }).strict(),
 ]);
 export type IdeaBoardOp = z.infer<typeof ideaBoardOpSchema>;
+
+export type IdeaDecisionKind = "pursue" | "revise" | "reject";
+interface VersionRef { id: string; hash: string; version: number }
+interface DecisionRef { target: { id: string; hash: string }; decision: string; reason: string; at: string }
+/** An idea's status from its saved versions and recorded decisions (one rule
+ * for the backend, every agent and the Idea pane).
+ *
+ * Pursue belongs to the idea: revising a pursued idea keeps it pursued, so
+ * iterating between Ideas, Literature and Research Development never drops it.
+ * Revise and reject are answered by a new version, which returns the idea to
+ * "to decide". The idea's most recent decision counts. */
+export function ideaStatus(latest: VersionRef, versions: readonly VersionRef[], decisions: readonly DecisionRef[]) {
+  const d = decisions
+    .filter((x) => x.target.id === latest.id)
+    .sort((a, b) => String(a.at).localeCompare(String(b.at)))
+    .at(-1);
+  if (!d) return { status: "to-decide" as const, decision: null };
+  const onVersion = versions.find((v) => v.id === latest.id && v.hash === d.target.hash)?.version ?? null;
+  const current = d.target.hash === latest.hash;
+  const decision = { decision: d.decision as IdeaDecisionKind, reason: d.reason, at: d.at, onVersion, carried: !current };
+  if (current || d.decision === "pursue") return { status: d.decision as IdeaDecisionKind, decision };
+  return { status: "to-decide" as const, decision };
+}

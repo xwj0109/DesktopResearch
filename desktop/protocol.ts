@@ -239,12 +239,41 @@ export function researchDTO(value: any, route: string): unknown {
       "deleted",
       "ideas",
       "importance",
+      "pursued",
+      "noteLinks",
+      "ideaTitles",
+      "production",
     ]);
   if (/\/native\/reviews\/review_(prepare|duplicate)$/.test(route)) return pick(value, ["review", "revision", "persistence"]);
   if (/\/native\/reviews\/review_delete$/.test(route)) return pick(value, ["deleted", "revision", "persistence"]);
   if (/\/native\/reviews\/review_create_idea$/.test(route)) return pick(value, ["target", "review"]);
   if (/\/native\/ideas$/.test(route)) return pick(value, ["ideas"]);
   if (/\/native\/source-importance$/.test(route)) return pick(value, ["artifactId", "importance"]);
+  if (/\/native\/note-links$/.test(route)) return pick(value, ["noteId", "idea", "stance", "onVersion", "removed"]);
+  if (/\/native\/idea-note$/.test(route)) return pick(value, ["idea", "added", "evidence", "shown"]);
+  if (/\/native\/feeds$/.test(route)) return pick(value, ["service", "feeds"]);
+  if (/\/native\/feeds\/rows\?/.test(route)) return pick(value, ["columns", "types", "rows", "series", "valueColumn"]);
+  if (/\/native\/feeds\/partitions\?/.test(route)) return pick(value, ["partitions", "outages"]);
+  if (/\/native\/feeds\/(create|update)$/.test(route)) return value;
+  if (/\/native\/feeds\/delete$/.test(route)) return pick(value, ["deleted", "keptData", "bytes"]);
+  if (/\/native\/feeds\/service$/.test(route)) return pick(value, ["mode", "enabled", "running", "heartbeatAt", "pid", "feeds", "label", "log"]);
+  if (/\/native\/production\/preview\?/.test(route)) return pick(value, ["idea", "title", "version", "pursued", "checkpoint", "pending", "snapshots", "current"]);
+  if (/\/native\/production\/commit$/.test(route)) return pick(value, ["idea", "title", "version", "hash", "checkpoint", "checkpointMessage", "snapshots", "note", "committedAt"]);
+  if (/\/native\/rd\/files\?/.test(route)) return pick(value, ["idea", "files"]);
+  if (/\/native\/data\/snapshots$/.test(route)) return pick(value, ["folder", "snapshots"]);
+  if (/\/native\/data\/jobs$/.test(route)) return pick(value, ["jobs"]);
+  if (/\/native\/data\/symbols\?/.test(route)) return pick(value, ["symbols", "total"]);
+  if (/\/native\/data\/estimate\?/.test(route)) return pick(value, ["files", "bytes", "first", "last", "missing", "missingCount", "freeBytes"]);
+  if (/\/native\/data\/fetch$/.test(route)) return pick(value, ["job"]);
+  if (/\/native\/data\/cancel$/.test(route)) return pick(value, ["job", "status"]);
+  if (/\/native\/data\/delete$/.test(route)) return pick(value, ["deleted", "bytes", "references"]);
+  if (/\/native\/data\/(preview\?|register$)/.test(route))
+    return pick(value, ["version", "name", "title", "file", "format", "source", "query", "createdAt", "rows", "columns", "types", "first", "last", "bytes", "sha256", "parts", "missing", "preview", "references"]);
+  if (/\/native\/rd\/file\?/.test(route)) return pick(value, ["path", "kind", "bytes", "mime", "base64", "text", "truncated", "tooLarge"]);
+  if (/\/native\/rd\/changes\?/.test(route)) return pick(value, ["files", "added", "removed"]);
+  if (/\/native\/rd\/history\?/.test(route)) return pick(value, ["checkpoints", "sha", "files", "added", "removed"]);
+  if (/\/native\/rd\/diff\?/.test(route)) return pick(value, ["path", "sha", "diff", "truncated", "binary"]);
+  if (/\/native\/rd\/checkpoint$/.test(route)) return pick(value, ["sha", "at", "message", "stat"]);
   if (/\/native\/view-events\?/.test(route)) return pick(value, ["seq", "events"]);
   if (/\/native\/view-context\?/.test(route)) return pick(value, ["ok"]);
   if (/\/native\/mcp-access$/.test(route)) return pick(value, ["enabled", "file", "bridge"]);

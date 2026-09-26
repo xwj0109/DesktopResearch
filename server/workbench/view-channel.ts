@@ -12,8 +12,14 @@ export type ViewEvent =
   | { type: "find"; artifactId: string; query: string; occurrence: number; page: number }
   | { type: "close-source" | "pin-source" | "unpin-source"; artifactId: string }
   | { type: "open-idea"; target: string }
+  | { type: "focus-idea"; target: string | null }
+  | { type: "develop-idea"; target: string | null }
   | { type: "refresh" };
 export interface ViewContext {
+  /** Literature's focus idea in this window (r:<id>), if any. */
+  focusIdea?: string | null;
+  /** The idea Research Development is working on in this window (r:<id>). */
+  developIdea?: string | null;
   activeArtifact?: string | null;
   page?: number;
   openArtifacts?: string[];
