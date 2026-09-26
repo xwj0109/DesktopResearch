@@ -24,6 +24,7 @@ export interface ViewContext {
   page?: number;
   openArtifacts?: string[];
   ideaTarget?: string | null;
+  stage?: string | null;
 }
 type Stamped = ViewEvent & { seq: number };
 

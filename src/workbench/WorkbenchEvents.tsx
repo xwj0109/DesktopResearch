@@ -122,11 +122,11 @@ export function WorkbenchEvents({
     if (scope.portfolio) return;
     const timer = setTimeout(() => {
       void scope.client
-        .read(`/native/view-context?active=${active ?? ""}&page=${page || ""}&idea=${idea}&open=${open}&focus=${focus}&develop=${develop}`)
+        .read(`/native/view-context?active=${active ?? ""}&page=${page || ""}&idea=${idea}&open=${open}&focus=${focus}&develop=${develop}&stage=${scope.stage ?? ""}`)
         .catch(() => {});
     }, 300);
     return () => clearTimeout(timer);
-  }, [active, open, page, idea, focus, develop, scope.client, scope.portfolio]);
+  }, [active, open, page, idea, focus, develop, scope.stage, scope.client, scope.portfolio]);
   if (!notice) return null;
   return (
     <div className="agent-toast" role="status">

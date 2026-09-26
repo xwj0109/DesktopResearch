@@ -97,7 +97,7 @@ export const STAGE_GUIDANCE: Record<(typeof stageIds)[number], string> = {
   literature:
     "This conversation is the Explore stage (literature). It works on the ideas the user decided to pursue: start from ideas_pursued (each idea at its latest saved version, with the decision reason and the sources it already cites). The window works on one focus idea at a time (ideas_pursued.focus; change it with literature_focus when asked): unless the user says otherwise, \"find papers\", ranking (source_importance with idea) and comments are about the focus idea, or about every pursued idea when there is no focus. For those ideas, find and import relevant papers when asked, read them, highlight and comment on the passages that support, contradict or refine each idea, and say which idea each finding bears on. Treat ideas not marked pursue as out of scope unless the user brings them in. When a passage bears on an idea, create the note with its stance (note_create with stance, or note_link): supports, contradicts or refines; idea_notes shows the evidence gathered for an idea so far. When a finding should change an idea, offer idea_add_note: it adds the note to the idea as an unsaved revision for the user to edit and save. Each pursued idea's coverage lists its gaps: use them to suggest what to read or look for next, especially evidence that could contradict an idea, and re-judge notes made on an earlier version.",
   research:
-    "This conversation is the Develop stage (Research Development) for one pursued idea, and your working directory is that idea's own workspace (a git repository the app checkpoints). Develop the research with the user: write and run exploratory scripts and code with your own tools, produce documents there (markdown reports, figures, CSV tables, PDFs), and shape the research specification. Keep work for this idea in this folder. The user sees the files, the changes since the last checkpoint and the documents in the right-hand panes; record a checkpoint (rd_checkpoint, with a short message) when the user asks or offers one at meaningful points. Use idea_get or ideas_pursued for the idea itself and idea_notes for its literature evidence. Real data: the strategy's frozen snapshots are in data/ (read-only Parquet; data_snapshots lists them with their columns). Process them with polars, lazily for tick data (pl.scan_parquet on a snapshot folder, filter and aggregate before collect), rather than loading everything into memory. When the user asks for data, fetch it with data_fetch: tick-level trades, aggregated trades, 1s bars, order-book depth, best bid/ask, open interest, funding and option summaries from the Binance archive (spot, USDⓈ-M, COIN-M, options; data_estimate first for big ranges), or bars from Binance, Coinbase and FRED series; watch data_jobs; for other sources, such as Bloomberg or files the user has, write the file with the user's own code in the workspace and register it with data_register (with a note on its source). Never modify files in data/; derive new files in the workspace instead. Results you will compare or report should come from recorded runs: declare entries in research.toml ([run.<name>] command = \"uv run python train.py\", optional inputs = [snapshot names]; [env] lock = \"uv.lock\"), start them with run_submit (they run a clean copy of the checkpoint, so edits after that do not change them), have the code write outputs/metrics.json (flat names → numbers) and other results to $PI_RESEARCH_OUTPUTS, follow them with run_status or run_logs, and compare with run_compare, which says when two runs are not like for like. You may start a limited number of runs and run minutes per hour (runs_list shows the limit and what is used); when a run needs more, say so and let the user start it. The idea's risks (risk_list) say what could make it unusable: test the most fundamental unknown ones first with small runs, and record the result with risk_set (status measured-ok or failed, evidence {run}); when a risk fails, say so plainly and offer the ways forward (revise the idea, work around it, or stop).",
+    "This conversation is the Develop stage (Research Development) for one pursued idea, and your working directory is that idea's own workspace (a git repository the app checkpoints). Start from idea_context: where the idea stands (risks, literature, workspace, runs, candidate) and the suggested next steps; the user sees the same summary. Develop the research with the user: write and run exploratory scripts and code with your own tools, produce documents there (markdown reports, figures, CSV tables, PDFs), and shape the research specification. Keep work for this idea in this folder. The user sees the files, the changes since the last checkpoint and the documents in the right-hand panes; record a checkpoint (rd_checkpoint, with a short message) when the user asks or offers one at meaningful points. Use idea_get or ideas_pursued for the idea itself and idea_notes for its literature evidence. Real data: the strategy's frozen snapshots are in data/ (read-only Parquet; data_snapshots lists them with their columns). Process them with polars, lazily for tick data (pl.scan_parquet on a snapshot folder, filter and aggregate before collect), rather than loading everything into memory. When the user asks for data, fetch it with data_fetch: tick-level trades, aggregated trades, 1s bars, order-book depth, best bid/ask, open interest, funding and option summaries from the Binance archive (spot, USDⓈ-M, COIN-M, options; data_estimate first for big ranges), or bars from Binance, Coinbase and FRED series; watch data_jobs; for other sources, such as Bloomberg or files the user has, write the file with the user's own code in the workspace and register it with data_register (with a note on its source). Never modify files in data/; derive new files in the workspace instead. Results you will compare or report should come from recorded runs: declare entries in research.toml ([run.<name>] command = \"uv run python train.py\", optional inputs = [snapshot names]; [env] lock = \"uv.lock\"), start them with run_submit (they run a clean copy of the checkpoint, so edits after that do not change them), have the code write outputs/metrics.json (flat names → numbers) and other results to $PI_RESEARCH_OUTPUTS, follow them with run_status or run_logs, and compare with run_compare, which says when two runs are not like for like. You may start a limited number of runs and run minutes per hour (runs_list shows the limit and what is used); when a run needs more, say so and let the user start it. The idea's risks (risk_list) say what could make it unusable: test the most fundamental unknown ones first with small runs, and record the result with risk_set (status measured-ok or failed, evidence {run}); when a risk fails, say so plainly and offer the ways forward (revise the idea, work around it, or stop).",
   data:
     "This conversation is the Release stage. It works on the release candidate (candidate_status, production_status: its exact version, workspace checkpoint and the snapshots its research used): validating it, and building the production data it needs: live and scheduled feeds, their contracts and quality checks. Production data is live and continuously updated, not exploratory; be precise about schemas, units, timing, latency and gaps. candidate_status shows the release candidate, its checks and validation runs; candidate_validate runs its entry on exactly its checkpoint.",
   code: "This conversation is the Design & Code stage: design and implement the strategy code.",
@@ -709,6 +709,18 @@ export const tools: WorkbenchTool[] = [
     },
   }),
 
+  /* ── What the agent knows about an idea ────────────────────────── */
+  define({
+    name: "idea_context",
+    ideaField: "idea",
+    title: "Where an idea stands",
+    description:
+      "One compact summary of an idea, built from its records: the hypothesis, its risks (worst first, stale ones marked), literature coverage, the workspace (changes not checkpointed, last checkpoint, newest documents), recent runs with metrics, the release candidate, the agent run budget, what the window shows, and suggested next steps. Read it at the start of a conversation and whenever you lose track; the user sees the same summary as \"What the AI sees\".",
+    input: z.object({ idea: rdIdea }).strict(),
+    readOnly: true,
+    run: ({ sid, wb }, { idea }) => wb.ideaContext(sid, wb.riskIdea(sid, idea)),
+  }),
+
   /* ── Risks: what could make an idea unusable, and how well it is known ── */
   define({
     name: "risk_list",
@@ -1281,6 +1293,63 @@ export class Workbench {
     this.view.publish(sid, { type: "refresh" });
     return commit;
   }
+  /* ── idea context ──────────────────────────────────────────────── */
+  async ideaContext(sid: string, target: string) {
+    const v = this.savedIdea(sid, target)!;
+    const content = this.savedContent(sid, v);
+    const p = this.pursuedIdeas(sid).find((i) => i.target === target);
+    const status = this.status(sid, v);
+    const risks = this.riskList(sid, target);
+    const { dir } = await this.rdWorkspace(sid, target);
+    const pending = (await this.rd.changes(dir)).files.length;
+    const [cp] = await this.rd.history(dir, 1);
+    const documents = this.rd
+      .files(dir)
+      .filter((f) => f.document && f.path !== "README.md")
+      .sort((a, b) => b.modified.localeCompare(a.modified))
+      .slice(0, 3)
+      .map((f) => ({ path: f.path, modified: f.modified }));
+    const runs = this.runs.list(sid, target);
+    const prod = this.store.get(sid).production;
+    const cand = prod?.current?.idea === target ? await this.candidateStatus(sid) : null;
+    const coverage = p?.coverage ?? null;
+    const next: string[] = [];
+    const failed = risks.risks.find((r) => r.status === "failed");
+    const unknown = risks.risks.find((r) => r.status === "unknown");
+    const stale = risks.risks.find((r) => r.stale);
+    if (failed) next.push(`A risk failed: “${failed.text}”. Revise the idea, work around it, or stop.`);
+    if (stale) next.push(`Re-check the stale risk “${stale.text}” (${stale.stale})`);
+    if (unknown) next.push(`Test the risk “${unknown.text}” with the cheapest run that could fail it.`);
+    if (!risks.risks.length) next.push("Name the 3–5 risks that could make this idea unusable (risk_add).");
+    if (pending) next.push(`${pending} change${pending === 1 ? "" : "s"} not checkpointed.`);
+    if (!runs.length) next.push("No recorded runs yet: add a research.toml entry and run it (run_submit).");
+    if (coverage?.next) next.push(`Literature: ${coverage.next}`);
+    if (cand?.current && cand.state === "not validated") next.push(`Validate release candidate ${cand.current.number} (candidate_validate).`);
+    const view = this.view.context(sid);
+    return {
+      idea: {
+        target,
+        title: content.title,
+        version: v.version,
+        status: status.status,
+        pursuedSince: p?.pursuedOnVersion ?? null,
+        rationale: content.rationale,
+        universe: content.universe,
+        horizon: content.horizon,
+        falsification: content.falsification,
+        pendingEdits: p?.pendingEdits ?? false,
+      },
+      window: { stage: view.stage ?? null, current: view.developIdea === target },
+      risks: { counts: risks.counts, top: risks.risks.slice(0, 6).map((r) => ({ id: r.id, text: r.text, kind: r.kind, status: r.status, stale: r.stale })) },
+      literature: coverage ? { papers: coverage.papers.primary + coverage.papers.secondary, notes: coverage.notes, next: coverage.next } : null,
+      workspace: { pending, lastCheckpoint: cp ? { sha: cp.sha, message: cp.message, at: cp.at } : null, newestDocuments: documents },
+      runs: runs.slice(0, 5).map((r) => ({ id: r.id, label: r.entry ?? r.command, status: r.status, commit: r.commit.slice(0, 8), when: r.createdAt, metrics: Object.fromEntries(Object.entries(r.metrics ?? {}).slice(0, 6)), candidate: r.candidate })),
+      candidate: cand?.current ? { number: cand.current.number, version: cand.current.version, checkpoint: cand.current.checkpoint.slice(0, 8), state: cand.state } : null,
+      agentRuns: { limit: this.runLimit(sid), used: this.agentUsage(sid) },
+      next: next.slice(0, 5),
+    };
+  }
+
   /* ── risks ─────────────────────────────────────────────────────── */
   /** The idea risks are about: the given saved idea, else the window's current one. */
   riskIdea(sid: string, idea?: string) {

@@ -23,6 +23,8 @@ export const viewContextSchema = z
     ideaTarget: z.string().regex(/^(d|r):[0-9a-f-]{36}$/).nullable().optional(),
     focusIdea: z.string().regex(/^r:[0-9a-f-]{36}$/).nullable().optional(),
     developIdea: z.string().regex(/^r:[0-9a-f-]{36}$/).nullable().optional(),
+    /** The stage the window shows (ideas, literature, research, data, …). */
+    stage: z.string().regex(/^[a-z]{1,12}$/).nullable().optional(),
   })
   .strict();
 const names: Record<string, ConversationTab> = {
@@ -101,6 +103,10 @@ export function nativeRoutes(
       app.get(base + "/runs/output", async (req, res) => {
         const { run, path } = z.object({ run: z.uuid(), path: z.string().min(1).max(500) }).strict().parse(req.query);
         res.json(await workbench.call(z.uuid().parse(req.params.id), "run_output", { run, path }));
+      });
+      app.get(base + "/idea-context", async (req, res) => {
+        const { idea } = z.object({ idea: z.string().regex(/^r:[0-9a-f-]{36}$/) }).strict().parse(req.query);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "idea_context", { idea }));
       });
       app.get(base + "/risks", async (req, res) => {
         const { idea } = z.object({ idea: z.string().regex(/^r:[0-9a-f-]{36}$/) }).strict().parse(req.query);
@@ -228,7 +234,7 @@ export function nativeRoutes(
       app.get(base + "/view-context", (req, res) => {
         const sid = z.uuid().parse(req.params.id);
         store.get(sid);
-        const q = z.object({ active: z.string(), page: z.string(), idea: z.string(), open: z.string(), focus: z.string().optional(), develop: z.string().optional() }).strict().parse(req.query);
+        const q = z.object({ active: z.string(), page: z.string(), idea: z.string(), open: z.string(), focus: z.string().optional(), develop: z.string().optional(), stage: z.string().optional() }).strict().parse(req.query);
         workbench.view.setContext(
           sid,
           viewContextSchema.parse({
@@ -237,6 +243,7 @@ export function nativeRoutes(
             ideaTarget: q.idea || null,
             focusIdea: q.focus || null,
             developIdea: q.develop || null,
+            stage: q.stage || null,
             openArtifacts: q.open ? q.open.split(",") : [],
           }),
         );

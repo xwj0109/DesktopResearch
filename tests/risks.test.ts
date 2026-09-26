@@ -102,3 +102,22 @@ test("a conversation bound to an idea keeps its risks on that idea", async (t) =
   assert.equal((await agent("risk_add", { idea: b, text: "x", kind: "data" })).error, true);
   assert.equal((await call("risk_list", { idea: b })).risks.length, 0);
 });
+
+test("idea_context: one summary of where an idea stands, with next steps, for the agent and the user", async (t) => {
+  const { call, wb, sid, ended } = setup(t);
+  const a = await pursued(call, "Context idea");
+  wb.view.setContext(sid, { developIdea: a, stage: "research" });
+  let c = await call("idea_context", {});
+  assert.deepEqual([c.idea.title, c.idea.status, c.window], ["Context idea", "pursue", { stage: "research", current: true }]);
+  assert.ok(c.next.some((n: string) => /Name the 3–5 risks/.test(n)));
+  assert.ok(c.next.some((n: string) => /No recorded runs yet/.test(n)));
+  await call("risk_add", { text: "Depth data is not archived", kind: "data" });
+  const run = await call("run_submit", { idea: a, command: "mkdir -p \"$PI_RESEARCH_OUTPUTS\" && echo '{\"auc\": 0.61}' > \"$PI_RESEARCH_OUTPUTS/metrics.json\"" });
+  await ended(run.id);
+  c = await call("idea_context", {});
+  assert.equal(c.next[0], "Test the risk “Depth data is not archived” with the cheapest run that could fail it.");
+  assert.deepEqual(c.runs.map((r: any) => [r.status, r.metrics.auc]), [["succeeded", 0.61]]);
+  assert.equal(c.risks.counts.unknown, 1);
+  assert.equal(c.candidate, null);
+  assert.deepEqual(c.agentRuns.limit, { runs: 5, minutes: 60 });
+});

@@ -7,6 +7,7 @@ import { PaneVisible, usePoll } from "../usePoll";
 import { setBadge } from "../badges";
 import type { IdeaCoverage } from "../../idea-coverage";
 import { riskSummary, useRisks } from "./Risks";
+import { IdeaContextPanel } from "./IdeaContext";
 import { formatTime } from "../transcript";
 import { CodeView } from "./CodePane";
 import { SendToProduction } from "./Production";
@@ -50,6 +51,7 @@ const size = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.rou
 export function ResearchIdeaBar() {
   const scope = useResearch();
   const [sending, setSending] = useState(false);
+  const [seeing, setSeeing] = useState(false);
   if (!scope.view || scope.portfolio) return null;
   const pursued: DevIdea[] = scope.view.pursued ?? [];
   const dev = developingIdea(scope.view, scope.drafts);
@@ -90,11 +92,17 @@ export function ResearchIdeaBar() {
         </span>
       )}
       {dev && (
+        <button className={`btn small ${seeing ? "primary" : "ghost"}`} title="The summary Pi reads for this idea (idea_context)" onClick={() => setSeeing((s) => !s)}>
+          What the AI sees
+        </button>
+      )}
+      {dev && (
         <button className={`btn small ${sending ? "primary" : "ghost"}`} onClick={() => setSending((s) => !s)}>
           Create release candidate…
         </button>
       )}
     </div>
+    {seeing && dev && <IdeaContextPanel idea={dev.target} onClose={() => setSeeing(false)} />}
     {sending && dev && <SendToProduction idea={dev.target} onClose={() => setSending(false)} />}
     </>
   );

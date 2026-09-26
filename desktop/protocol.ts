@@ -267,6 +267,7 @@ export function researchDTO(value: any, route: string): unknown {
   if (/\/native\/runs\/compare\?/.test(route)) return pick(value, ["a", "b", "differences", "warnings", "metrics", "usage"]);
   if (/\/native\/runs\/output\?/.test(route)) return pick(value, ["path", "kind", "bytes", "mime", "base64", "text", "truncated", "tooLarge"]);
   if (/\/native\/runs\/limit$/.test(route)) return pick(value, ["runs", "minutes"]);
+  if (/\/native\/idea-context\?idea=/.test(route)) return pick(value, ["idea", "window", "risks", "literature", "workspace", "runs", "candidate", "agentRuns", "next"]);
   if (/\/native\/risks\?idea=/.test(route)) return pick(value, ["idea", "risks", "counts"]);
   if (/\/native\/risks\/(add|set)$/.test(route)) return pick(value, ["idea", "risk"]);
   if (/\/native\/risks\/delete$/.test(route)) return pick(value, ["deleted"]);

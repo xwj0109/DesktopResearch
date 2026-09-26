@@ -5794,3 +5794,47 @@ button.link {
   padding: 0 2px;
   cursor: pointer;
 }
+
+/* What the AI sees (idea_context), under the Develop bar. */
+.idea-context {
+  margin: 6px var(--gap) 0;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 12px;
+  max-height: 45vh;
+  overflow: auto;
+}
+.idea-context-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.idea-context-head .spacer {
+  flex: 1;
+}
+.idea-context-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 4px 18px;
+  padding: 8px 10px;
+}
+.idea-context-body h4 {
+  margin: 4px 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: lowercase;
+}
+.idea-context-body p,
+.idea-context-body ul,
+.idea-context-body ol {
+  margin: 2px 0;
+}
+.idea-context-body ul {
+  list-style: none;
+  padding: 0;
+}
+.idea-context-body ol {
+  padding-left: 18px;
+}

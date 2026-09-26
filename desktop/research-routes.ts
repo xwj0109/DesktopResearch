@@ -56,7 +56,7 @@ export function researchRequest(scope: Scope, request: LabRequest): boolean {
     if (new RegExp(`^/native/view-events\\?after=-?\\d{1,12}$`).test(tail)) read = true;
     else if (
       new RegExp(
-        `^/native/view-context\\?active=(${uuid})?&page=\\d{0,6}&idea=((d|r):${uuid})?&open=(${uuid}(,${uuid}){0,11})?(&focus=(r:${uuid})?)?(&develop=(r:${uuid})?)?$`,
+        `^/native/view-context\\?active=(${uuid})?&page=\\d{0,6}&idea=((d|r):${uuid})?&open=(${uuid}(,${uuid}){0,11})?(&focus=(r:${uuid})?)?(&develop=(r:${uuid})?)?(&stage=[a-z]{0,12})?$`,
       ).test(tail)
     )
       read = true;
@@ -77,7 +77,7 @@ export function researchRequest(scope: Scope, request: LabRequest): boolean {
     else if (tail === "/native/risks/add") schema = riskAddSchema;
     else if (tail === "/native/risks/set") schema = riskSetSchema;
     else if (tail === "/native/risks/delete") schema = riskDeleteSchema;
-    else if (new RegExp(`^/native/risks\\?idea=r:${uuid}$`).test(tail)) read = true;
+    else if (new RegExp(`^/native/(risks|idea-context)\\?idea=r:${uuid}$`).test(tail)) read = true;
     else if (new RegExp(`^/native/runs\\?idea=r:${uuid}$`).test(tail)) read = true;
     else if (new RegExp(`^/native/runs/(status\\?run=${uuid}|log\\?run=${uuid}(&offset=\\d{1,12})?|compare\\?a=${uuid}&b=${uuid}|output\\?run=${uuid}&path=[^&#]{1,1500})$`).test(tail)) read = true;
     else if (tail === "/native/feeds") read = true;
