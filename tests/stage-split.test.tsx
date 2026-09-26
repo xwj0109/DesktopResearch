@@ -29,15 +29,16 @@ test("a tile can show a second of its panes below the current one; the choice is
   let r!: ReturnType<typeof create>;
   await act(async () => { r = create(<Host />); });
   const shown = () => r.root.findAll((n) => n.props["data-pane-body"] && !n.parent?.props.hidden).map((n) => n.props["data-pane-body"]);
-  assert.deepEqual(shown(), ["pi", "files"]);
+  assert.deepEqual(shown(), ["pi", "runs"]);
   await act(async () => r.root.findByProps({ "aria-label": "Show another pane below" }).props.onClick());
-  assert.deepEqual(shown(), ["pi", "files", "changes"]);
-  assert.deepEqual(state.below, { c: "changes" });
+  assert.deepEqual(shown(), ["pi", "runs", "documents"]);
+  assert.deepEqual(state.below, { c: "documents" });
   // Choose what goes below; the current tab is never offered twice.
   const select = r.root.findByProps({ "aria-label": "Pane below" });
-  assert.equal(select.findAllByType("option").some((o) => o.props.value === "files"), false);
-  await act(async () => select.props.onChange({ target: { value: "documents" } }));
-  assert.deepEqual(shown(), ["pi", "files", "documents"]);
-  await act(async () => r.root.findByProps({ "aria-label": "Close Documents below" }).props.onClick());
-  assert.deepEqual(shown(), ["pi", "files"]);
+  assert.equal(select.findAllByType("option").some((o) => o.props.value === "runs"), false);
+  await act(async () => select.props.onChange({ target: { value: "changes" } }));
+  assert.deepEqual(shown(), ["pi", "runs", "changes"]);
+  await act(async () => r.root.findByProps({ "aria-label": "Close Changes below" }).props.onClick());
+  assert.deepEqual(shown(), ["pi", "runs"]);
+  assert.equal("below" in state && state.below !== undefined, false, "closing leaves nothing behind for the saved view");
 });

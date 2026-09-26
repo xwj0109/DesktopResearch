@@ -61,7 +61,8 @@ Write an adapter that lists `Workbench.manifest()` in the runtime's format and f
 These are known gaps. Close them in line with the rules above; don't extend them.
 
 - **The conversation pane runs the Pi CLI.** It is the real `pi` in a PTY (`desktop/terminal.ts`), with research tools through the MCP-backed extension, so nothing about research depends on it. Starting another CLI agent in the same pane (with its own MCP config) is the natural next step toward rule 8. The graphical Pi-SDK conversation (`server/pi.ts`, `server/pi-host*.mjs`) remains only as a fallback.
-- **Registry coverage.** Ideas, Sources and research review snapshots are covered (27 tools). Other research records (search brief, bibliography, spec, contract, graph, code, conclusion) and commands (handoffs, feasibility, datasets, runs, exports) are reachable only through the UI so far. Under rule 5 they should become registry tools, ideally derived from the existing zod contracts in `src/platform.ts`.
+- **Registry coverage.** Ideas, sources, reviews, Research Development workspaces, data snapshots, feeds, runs and release candidates are covered (71 tools). The legacy records (search brief, bibliography, spec, contract, graph, code, conclusion) and their commands (handoffs, feasibility, datasets, reference-engine runs, exports) are still reachable only through the UI; they are being replaced rather than extended (docs/WORKFLOW-REDESIGN-PLAN.md).
+- **One deliberate asymmetry:** `run_limit_set` refuses agents, because the limit exists to bound what agents do without the user.
 - **Request journal growth.** Every window mutation, including debounced idea-board edits, adds a request journal entry that is never pruned.
 
 See [interface](INTERFACE.md#agents-operating-the-panes-workbench-tools) for how the current tools, view events and MCP access work.

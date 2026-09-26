@@ -81,6 +81,34 @@ export function nativeRoutes(
         });
       }
 
+      // Runs and the release candidate (reads are GETs: presentation, never journaled).
+      app.get(base + "/runs", async (req, res) => {
+        const { idea } = z.object({ idea: z.string().regex(/^r:[0-9a-f-]{36}$/) }).strict().parse(req.query);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "runs_list", { idea }));
+      });
+      app.get(base + "/runs/status", async (req, res) => {
+        const { run } = z.object({ run: z.uuid() }).strict().parse(req.query);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "run_status", { run }));
+      });
+      app.get(base + "/runs/log", async (req, res) => {
+        const { run, offset } = z.object({ run: z.uuid(), offset: z.coerce.number().int().min(0).optional() }).strict().parse(req.query);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "run_logs", { run, ...(offset !== undefined ? { offset } : {}) }));
+      });
+      app.get(base + "/runs/compare", async (req, res) => {
+        const { a, b } = z.object({ a: z.uuid(), b: z.uuid() }).strict().parse(req.query);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "run_compare", { a, b }));
+      });
+      app.get(base + "/runs/output", async (req, res) => {
+        const { run, path } = z.object({ run: z.uuid(), path: z.string().min(1).max(500) }).strict().parse(req.query);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "run_output", { run, path }));
+      });
+      app.get(base + "/candidate", async (req, res) => {
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "candidate_status", {}));
+      });
+      for (const [route, tool] of [["runs/submit", "run_submit"], ["runs/cancel", "run_cancel"], ["runs/limit", "run_limit_set"], ["candidate/validate", "candidate_validate"]] as const)
+        app.post(base + "/" + route, async (req, res) => {
+          res.json(await workbench.call(z.uuid().parse(req.params.id), tool, req.body));
+        });
       // Save, decide and delete ideas: the registry operations agents use, with the same checks.
       for (const [route, tool] of [["idea-save", "idea_save"], ["idea-decide", "idea_decide"], ["idea-delete", "idea_delete"]] as const)
         app.post(base + "/" + route, async (req, res) => {

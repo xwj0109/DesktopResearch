@@ -42,6 +42,8 @@ interface Preview {
   pending: number;
   snapshots: { name: string; title: string; bytes: number; referenced: boolean }[];
   current: { idea: string; version: number; checkpoint: string } | null;
+  entries?: { name: string; command: string }[];
+  defaultEntry?: string | null;
 }
 const errorText = (e: unknown) => String(e instanceof Error ? e.message : e).replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
 
@@ -51,6 +53,7 @@ export function SendToProduction({ idea, onClose }: { idea: string; onClose: () 
   const [p, setP] = useState<Preview | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [note, setNote] = useState("");
+  const [entry, setEntry] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [sent, setSent] = useState(false);
@@ -59,6 +62,7 @@ export function SendToProduction({ idea, onClose }: { idea: string; onClose: () 
       (d) => {
         setP(d);
         setPicked(new Set(d.snapshots.filter((s) => s.referenced).map((s) => s.name)));
+        setEntry((e) => e || d.defaultEntry || "");
       },
       (e) => setError(errorText(e)),
     );
@@ -69,7 +73,7 @@ export function SendToProduction({ idea, onClose }: { idea: string; onClose: () 
     setBusy(true);
     setError("");
     try {
-      await scope.client.write("/native/production/commit", { idea, snapshots: [...picked], ...(note.trim() ? { note: note.trim() } : {}) });
+      await scope.client.write("/native/production/commit", { idea, snapshots: [...picked], ...(note.trim() ? { note: note.trim() } : {}), ...(entry.trim() ? { entry: entry.trim() } : {}) });
       setSent(true);
       await scope.refresh().catch(() => {});
     } catch (e) {
@@ -83,11 +87,11 @@ export function SendToProduction({ idea, onClose }: { idea: string; onClose: () 
       {sent ? (
         <>
           <p>
-            <b>“{p?.title}” v{p?.version} is the release candidate.</b> Data, Design & Code, Backtests and Results now work on it, starting with Data.
+            <b>“{p?.title}” v{p?.version} is the release candidate.</b> Validate it and collect its live data in Release.
           </p>
           <div className="row-actions">
-            <button className="btn small primary" onClick={() => scope.goToStage?.("data")}>
-              Go to Data →
+            <button className="btn small primary" onClick={() => scope.goToStage?.("data", "candidate")}>
+              Go to Release →
             </button>
             <button className="btn small ghost" onClick={onClose}>
               Close
@@ -122,6 +126,21 @@ export function SendToProduction({ idea, onClose }: { idea: string; onClose: () 
               ))}
             </fieldset>
           )}
+          <label className="prod-entry">
+            Validate with{" "}
+            {p.entries?.length ? (
+              <select aria-label="Validation entry" value={entry} onChange={(e) => setEntry(e.target.value)}>
+                <option value="">(choose later)</option>
+                {p.entries.map((e) => (
+                  <option key={e.name} value={e.name}>
+                    {e.name}: {e.command}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input aria-label="Validation command" placeholder="a command, e.g. uv run python validate.py" value={entry} onChange={(e) => setEntry(e.target.value)} />
+            )}
+          </label>
           <input className="prod-note" aria-label="Note" placeholder="Note (optional), e.g. why this version" value={note} onChange={(e) => setNote(e.target.value)} />
           {error && <p className="notice error">{error}</p>}
           <div className="row-actions">

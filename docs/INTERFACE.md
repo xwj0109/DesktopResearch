@@ -39,16 +39,21 @@ Keyboard: `⌘K` palette · `⌘1–7` stages · `⌘B` rail · `⌘\` context p
 
 Each stage has a fixed tiling. It is not arbitrary docking: `a` is upper left, `b` lower left (optional), `c` the right column. Panes in `c` can have several tabs.
 
+The rail shows **Ideas → Explore → Develop → Release** (⌘1–4) and, below them, the pursued ideas (choosing one makes it the window's current idea). The earlier record system's stages (Design & Code, Backtests, Results) appear only after **Show legacy stages** in the palette (window draft `ui:legacy-stages`), so their records stay readable. Stage ids are unchanged (`ideas`, `literature`, `research`, `data`, …), so conversations carry over.
+
 | Stage | a | b | c |
 | --- | --- | --- | --- |
 | Ideas | Pi | — | Idea · Sources |
-| Literature | Pi | — | Sources · Bibliography |
-| Research Development | Pi (the developing idea's own) | — | Files · Changes · Documents · Data · Research spec · Sources |
-| Data | Pi | — | Feeds · Explorer · Quality · Contract |
-| **Design & Code** | **Pi** | **Graph** | **Code** |
-| Backtests | Pi | — | Experiments (queue, runs, exact inputs, log) |
-| Results | Pi | — | Results · Conclusion |
+| Explore (`literature`) | Pi | — | Sources |
+| Develop (`research`) | Pi (the developing idea's own) | — | Runs · Documents · Changes · Files · Data |
+| Release (`data`) | Pi | — | Candidate · Feeds · Explorer · Quality |
+| Design & Code *(legacy)* | Pi | Graph | Code · Research spec · Contract |
+| Backtests *(legacy)* | Pi | — | Experiments (reference engine) |
+| Results *(legacy)* | Pi | — | Results · Conclusion |
 | Portfolio | Pi | — | Evidence (frozen imports, analyses, feedback) |
+
+- **Runs (Develop):** the idea's runs, newest first (status, entry or command, checkpoint, time, first metrics), with **Run ▸ ‹entry›** buttons from the workspace's `research.toml` and a command field with a time limit. A run shows what ran (checkpoint, recorded for the run if the workspace had changes; command; environment lock and hash; data snapshots; hardware), how it ended, wall time and peak memory, `outputs/metrics.json` as metrics, its output files (viewable) and its log (live while running). ⇧-click a second run, or **Compare with…**, to see the two side by side: metric changes, what differed, and warnings when they are not like for like. **Agent limit** shows the runs and run minutes an agent may start per hour without you, and only you can change it. See [plan §6](WORKFLOW-REDESIGN-PLAN.md) and `server/workbench/runs.ts`.
+- **Candidate (Release):** the release candidate: idea version, number, exact checkpoint (tag `candidate/<n>`), data kept, environment lock, validation entry, and state (not validated, validating, passed, failed). **Validate** runs its entry on exactly its checkpoint; validation runs open inline. The Create release candidate dialog in Develop picks the validation entry (default: `validate`, else the only entry).
 
 **Behaviour:**
 - Splits are dragged, moved with the arrow keys, or reset by double-click.
@@ -259,11 +264,12 @@ The chat, and optionally external agents, operate the Ideas and Sources panes th
 
 - **Strategy management.** The workspace launcher offers Rename and Delete beside each strategy. Rename preserves its ID, research and conversations. Delete requires confirmation, removes the strategy from the catalog, and revokes access; research files and conversations remain on disk, and portfolio imports remain intact. There is no launcher restore action. Connected sessions, unresolved ownership, active experiments and pending review delivery block deletion. An open desktop window prepares its drafts before deletion and resumes editing if deletion is refused. The backend registry exposes `strategy_rename` and `strategy_delete` with an expected-name check.
 
-- **Registry.** There are 61 small tools (including the two strategy-management tools above), each with a precise zod input schema that is exported as JSON Schema:
+- **Registry.** There are 71 small tools (including the two strategy-management tools above), each with a precise zod input schema that is exported as JSON Schema:
   - ideas: `ideas_list`, `ideas_pursued`, `literature_focus`, `idea_get`, `idea_create`, `idea_update`, `idea_save`, `idea_decide` (with `expectedHash`), `idea_delete`, `idea_open`. The Idea pane saves, decides and deletes through these same operations (`/native/idea-save|idea-decide|idea-delete`).
   - **A conversation bound to one idea** (the Research Development Pi, whose tool connection carries `idea=`) stays on it: tools that take an idea default to that one, whatever the window shows, and changes to another idea are refused; reads of other ideas stay allowed.
   - reviews: `reviews_list`, `review_get`, `review_prepare`, `review_duplicate`, `review_create_idea`, `review_delete`;
   - Research Development: `rd_develop`, `rd_files`, `rd_read`, `rd_changes`, `rd_diff`, `rd_checkpoint`, `rd_history`;
+  - runs: `runs_list`, `run_submit`, `run_status`, `run_logs`, `run_output`, `run_cancel`, `run_compare`, `run_limit_set` (refused for agents); release candidate: `production_commit` (with `entry`), `production_preview`, `production_status`, `candidate_status`, `candidate_validate`. Adapters call as an agent (`origin: "agent"`), windows as the user; agents' `run_submit` and `candidate_validate` count towards the run limit;
   - data snapshots: `data_snapshots`, `data_preview`, `data_symbols`, `data_estimate`, `data_fetch`, `data_jobs`, `data_cancel`, `data_register`, `data_delete`;
   - sources: `sources_list`, `source_notes`, `note_link`, `idea_notes`, `idea_add_note`, `paper_search`, `paper_import`, `source_view`, `paper_read`, `paper_find`, `note_create`, `note_update`, `note_delete`, `source_delete`, `source_restore`, `source_importance`.
 

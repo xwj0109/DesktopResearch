@@ -133,7 +133,11 @@ export function StageLayout({
     // A second pane below the current tab; never the same one twice.
     const wanted = state.below?.[slot] as PaneKind | undefined;
     const below = wanted && wanted !== current && tabs.includes(wanted) ? wanted : undefined;
-    const setBelow = (kind?: PaneKind) => set({ below: { ...state.below, [slot]: kind } });
+    const setBelow = (kind?: PaneKind) => {
+      // Absent, not undefined: the saved view only holds panes that are shown.
+      const next = Object.fromEntries(Object.entries({ ...state.below, [slot]: kind }).filter(([, v]) => v));
+      set({ below: Object.keys(next).length ? next : undefined });
+    };
     return (
       <section
         key={slot}

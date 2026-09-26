@@ -71,3 +71,10 @@ export type RunSubmit = z.infer<typeof runSubmitSchema>;
 export const runLimitSchema = z.object({ runs: z.number().int().min(0).max(100), minutes: z.number().int().min(0).max(1440) }).strict();
 export type RunLimit = z.infer<typeof runLimitSchema>;
 export const DEFAULT_RUN_LIMIT: RunLimit = { runs: 5, minutes: 60 };
+export const candidateValidateSchema = z
+  .object({
+    entry: z.string().trim().min(1).max(1000).optional().describe("Override the candidate's entry for this run."),
+    wallMinutes: z.number().int().min(1).max(1440).optional(),
+  })
+  .strict();
+export const runIdSchema = z.object({ run: z.uuid() }).strict();

@@ -45,7 +45,10 @@ import { SourcesPane } from "./panes/SourcesPane";
 import { IdeaBoard } from "./panes/IdeaBoard";
 import { GraphPane } from "./panes/GraphPane";
 import { CodePane } from "./panes/CodePane";
-import { DataPane, PortfolioPane, ResultsPane, RunsPane } from "./panes/EvidencePanes";
+import { DataPane, PortfolioPane, ResultsPane, RunsPane as ExperimentsPane } from "./panes/EvidencePanes";
+import { CandidatePane, RunsPane } from "./panes/Runs";
+import { LEGACY_STAGES } from "./stages";
+import { chooseIdea, chosenIdea } from "../workbench-contract";
 import { FeedExplorerPane, FeedQualityPane, FeedsPane } from "./panes/Feeds";
 import { useStageActivity } from "./useStageActivity";
 import {
@@ -262,6 +265,10 @@ function ResearchPane({ kind, stage }: { kind: PaneKind; stage: string }) {
       return <CodePane />;
     case "runs":
       return <RunsPane />;
+    case "experiments":
+      return <ExperimentsPane />;
+    case "candidate":
+      return <CandidatePane />;
     case "results":
       return <ResultsPane />;
     case "conclusion":
@@ -339,6 +346,9 @@ export function Workbench({ data, native }: { data: WorkbenchData; native?: Nati
   const previousStage = useRef<StageId | null>(null);
   const setLState = (next: LayoutState) => setLayouts((old) => ({ ...old, [layoutStage]: next }));
   const stagesAvailable = native?.kind !== "portfolio";
+  // Ideas, Explore, Develop, Release; the legacy stages only when the window shows them.
+  const legacyShown = researchDrafts[LEGACY_STAGES] === "1";
+  const shownStages = data.stages.filter((s) => legacyShown || !s.legacy);
   const research = useResearchData(native?.client);
   // The Pi conversation for this pane: the stage's, or in Research Development
   // the developing idea's own (null until there is a pursued idea to develop).
@@ -500,7 +510,7 @@ export function Workbench({ data, native }: { data: WorkbenchData; native?: Nati
   };
   const stepStage = (step: number) => {
     if (!stagesAvailable) return;
-    const ids = data.stages.map((s) => s.id);
+    const ids = shownStages.map((s) => s.id);
     navigate(ids[(ids.indexOf(stage) + step + ids.length) % ids.length]);
   };
   const navigate = (id: StageId) => {
@@ -553,7 +563,7 @@ export function Workbench({ data, native }: { data: WorkbenchData; native?: Nati
           return dir === "left" || dir === "right" ? go(() => cycleTab(dir === "right" ? 1 : -1)) : undefined;
         if (dir) return go(() => (event.shiftKey ? swapDir(dir) : moveFocus(dir)));
         const digit = /^Digit([1-7])$/.exec(code);
-        if (digit && stagesAvailable) return go(() => navigate(data.stages[Number(digit[1]) - 1].id));
+        if (digit && stagesAvailable && shownStages[Number(digit[1]) - 1]) return go(() => navigate(shownStages[Number(digit[1]) - 1].id));
         if (code === "KeyJ") return go(toggleSplit);
         if (code === "KeyF") return go(zoomActive);
         if (code === "KeyW") return go(hideActive);
@@ -574,8 +584,8 @@ export function Workbench({ data, native }: { data: WorkbenchData; native?: Nati
       else if (k === "f" && event.shiftKey) go(zoomActive);
       else if (k === "t" && event.shiftKey) go(() => setPalette("theme "));
       else if ((k === "[" || k === "]") && !event.shiftKey) go(() => cycleTab(k === "]" ? 1 : -1));
-      else if (/^[1-7]$/.test(k) && !event.shiftKey && stagesAvailable)
-        go(() => navigate(data.stages[Number(k) - 1].id));
+      else if (/^[1-7]$/.test(k) && !event.shiftKey && stagesAvailable && shownStages[Number(k) - 1])
+        go(() => navigate(shownStages[Number(k) - 1].id));
     };
     window.addEventListener("keydown", shortcuts);
     return () => window.removeEventListener("keydown", shortcuts);
@@ -620,6 +630,21 @@ export function Workbench({ data, native }: { data: WorkbenchData; native?: Nati
             group: "workspace",
             run: native.onLauncher,
           },
+          ...(native.kind === "strategy"
+            ? [
+                {
+                  id: "legacy-stages",
+                  label: legacyShown ? "Hide legacy stages" : "Show legacy stages",
+                  detail: "Design & Code, Backtests and Results: the earlier spec, contract, graph, code and reference-experiment records",
+                  glyph: "⋯",
+                  group: "workspace",
+                  run: () => {
+                    changeResearchDraft(LEGACY_STAGES, legacyShown ? "" : "1");
+                    if (legacyShown && data.stages.find((x) => x.id === stage)?.legacy) navigate("research");
+                  },
+                },
+              ]
+            : []),
           ...(native.kind === "strategy" && native.client
             ? [
                 {
@@ -655,7 +680,7 @@ export function Workbench({ data, native }: { data: WorkbenchData; native?: Nati
           },
         ]),
     ...(stagesAvailable
-      ? data.stages.map((item, index) => ({
+      ? shownStages.map((item, index) => ({
           id: item.id,
           label: item.label,
           detail: `${workspace.shortName} · research stage`,
@@ -935,7 +960,7 @@ export function Workbench({ data, native }: { data: WorkbenchData; native?: Nati
           </button>
           {!railOpen && <nav className="bar-ws" aria-label="Stage workspaces">
             {stagesAvailable &&
-              data.stages.map((item, index) => {
+              shownStages.map((item, index) => {
                 const focused = !portfolio && stage === item.id;
                 const a = stageActivity(item.id);
                 return (
@@ -1022,7 +1047,7 @@ export function Workbench({ data, native }: { data: WorkbenchData; native?: Nati
                       {native
                         ? native.kind === "portfolio"
                           ? "independent portfolio"
-                          : "strategy · seven stages"
+                          : "strategy"
                         : "synthetic preview"}
                     </span>
                   </div>
@@ -1072,10 +1097,10 @@ export function Workbench({ data, native }: { data: WorkbenchData; native?: Nati
                 {stagesAvailable && (
                   <div className="rail-group">
                     <h2 className="section-title">
-                      stages <span className="count">07</span>
+                      stages <span className="count">{String(shownStages.length).padStart(2, "0")}</span>
                     </h2>
                     <nav aria-label="Research stages">
-                      {data.stages.map((item, index) => {
+                      {shownStages.map((item, index) => {
                         const current = !portfolio && stage === item.id;
                         const a = stageActivity(item.id);
                         const panes = stageLayouts[item.id];
@@ -1119,6 +1144,32 @@ export function Workbench({ data, native }: { data: WorkbenchData; native?: Nati
                     </nav>
                   </div>
                 )}
+                {stagesAvailable && native?.kind === "strategy" && (research.view?.pursued?.length ?? 0) > 0 && (() => {
+                  // The pursued ideas; choosing one makes it the window's current idea (Explore, Develop).
+                  const pursued: { target: string; title: string; version: number }[] = research.view.pursued;
+                  const current = chosenIdea(pursued, researchDrafts)?.target ?? pursued[0]?.target;
+                  return (
+                    <div className="rail-group rail-ideas">
+                      <h2 className="section-title">
+                        ideas <span className="count">{String(pursued.length).padStart(2, "0")}</span>
+                      </h2>
+                      <nav aria-label="Pursued ideas">
+                        {pursued.map((p) => (
+                          <button
+                            key={p.target}
+                            className="row"
+                            aria-current={p.target === current ? "true" : undefined}
+                            title={`${p.title} · v${p.version}. The current idea for Explore and Develop.`}
+                            onClick={() => chooseIdea(changeResearchDraft, p.target)}
+                          >
+                            <span className="num">{p.target === current ? "◉" : "○"}</span>
+                            <span className="label">{p.title || "Untitled idea"}</span>
+                          </button>
+                        ))}
+                      </nav>
+                    </div>
+                  );
+                })()}
                 {native?.kind === "portfolio" && (
                   <div className="rail-group">
                     <h2 className="section-title">portfolio</h2>

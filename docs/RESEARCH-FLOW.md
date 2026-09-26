@@ -24,6 +24,17 @@ Data → Design & Code → Backtests → Results      production code, backtests
   - **Checkpoints:** the right-hand panes show the workspace's **Files**, the **Changes** since the last checkpoint (a commit), **Documents** produced, the **Research spec** and **Sources**. Pi writes and runs code with its own tools; the app only reads the workspace and records checkpoints.
 - **Agents read pursued ideas with `ideas_pursued`**: each idea at its latest saved version, with the version and reason of the pursue decision and its cited sources named. Each stage's agent is told its stage's role (`STAGE_GUIDANCE`).
 
+## Runs: the workspace's code, executed and recorded
+
+Decided 2026-09-26 (docs/WORKFLOW-REDESIGN-PLAN.md, phase 2). Results that will be compared or reported come from **runs**, not from scripts run by hand:
+
+- **Entries.** A workspace declares what can be run in `research.toml` (`[run.<name>] command = "uv run python train.py"`, optional `inputs`; `[env] lock = "uv.lock"`). A command can also be given directly.
+- **Exact by construction.** Starting a run checkpoints any uncheckpointed changes, then runs a clean copy of that checkpoint (data/ linked). Editing the workspace afterwards changes nothing that runs.
+- **What is recorded.** The command, environment files and lock hash, hardware, the snapshots used, exit, wall time, peak memory, the log, `outputs/metrics.json` and every output file with its hash. Runs live in `<strategy>/Runs/<id>/`.
+- **Detached.** Runs keep going when the app quits; the next start reconciles them (finished, or lost if the process vanished). At most two run at once.
+- **Agents run within a limit** (default 5 runs and 60 run minutes per hour); only the user changes it.
+- **Release candidates are validated by a run** of their entry on exactly their checkpoint.
+
 ## Sending an idea on
 
 When you are convinced, one idea is sent from Research Development to the production stages. From then on, Data, Design & Code, Backtests and Results work towards production code, backtests and outputs, all traceable to that idea's exact version. Other pursued ideas stay in the exploratory stages. Two ideas that are both worth building become two strategies, which a portfolio can compare or combine.

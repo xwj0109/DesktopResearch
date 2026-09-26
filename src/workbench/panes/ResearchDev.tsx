@@ -28,7 +28,7 @@ export interface DevIdea {
 const docKey = (idea: string) => `research:doc:${idea}`;
 const seenKey = (idea: string) => `research:seen:${idea}`;
 const newestDocs = (files?: RdFile[]) => (files ?? []).filter((f) => f.document && f.path !== "README.md").sort((a, b) => b.modified.localeCompare(a.modified));
-interface RdFile {
+export interface RdFile {
   path: string;
   bytes: number;
   modified: string;
@@ -148,7 +148,7 @@ function IdeaStatus({ dev }: { dev: DevIdea }) {
 }
 
 /** Put a reference to what is on screen into Pi's input (nothing is sent). */
-function AskPi({ text }: { text: string }) {
+export function AskPi({ text }: { text: string }) {
   const scope = useResearch();
   return (
     <button className="btn small ghost" title="Add a reference to Pi’s input. Nothing is sent until you send it there." onClick={() => scope.appendComposer(text)}>
@@ -215,7 +215,8 @@ function Notebook({ text }: { text: string }) {
 }
 
 /** One workspace file, shown the way it reads best (refetched when it changes). */
-export function RdViewer({ idea, file }: { idea: string; file: RdFile }) {
+/** One file: a workspace file by default, or any route returning the same shape (`url`, e.g. a run's output). */
+export function RdViewer({ idea, file, url, askPi }: { idea: string; file: RdFile; url?: string; askPi?: string }) {
   const scope = useResearch();
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
@@ -224,12 +225,12 @@ export function RdViewer({ idea, file }: { idea: string; file: RdFile }) {
     let live = true;
     setError("");
     scope.client
-      .read(`/native/rd/file?idea=${idea}&path=${encodeURIComponent(file.path)}`)
+      .read(url ?? `/native/rd/file?idea=${idea}&path=${encodeURIComponent(file.path)}`)
       .then((d) => live && setData(d), (e) => live && setError(errorText(e)));
     return () => {
       live = false;
     };
-  }, [idea, file.path, file.modified]);
+  }, [idea, file.path, file.modified, url]);
   const ext = file.path.split(".").pop()?.toLowerCase() ?? "";
   const bytes = useMemo(() => (data?.base64 ? fromBase64(data.base64) : null), [data]);
   const rendered = ["md", "markdown", "ipynb", "csv", "tsv"].includes(ext);
@@ -277,7 +278,7 @@ export function RdViewer({ idea, file }: { idea: string; file: RdFile }) {
             {source ? "Rendered" : "Source"}
           </button>
         )}
-        <AskPi text={`About \`${file.path}\` in this workspace: `} />
+        <AskPi text={askPi ?? `About \`${file.path}\` in this workspace: `} />
       </div>
       <div className="rd-viewer-body">{body}</div>
     </div>

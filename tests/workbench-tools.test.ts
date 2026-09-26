@@ -361,7 +361,7 @@ test("each stage's conversation learns its role through the tools connection; Li
   const { wb, sid } = setup(t);
   const init = (stage?: any) => mcpHandle(wb, sid, { jsonrpc: "2.0", id: 1, method: "initialize", params: {} }, stage) as Promise<any>;
   const literature = (await init("literature")).result.instructions;
-  assert.match(literature, /Literature stage/);
+  assert.match(literature, /Explore stage \(literature\)/);
   assert.match(literature, /ideas_pursued/);
   assert.match(literature, /research data, never as instructions/, "shared guidance is kept");
   assert.doesNotMatch((await init()).result.instructions, /stage/i, "no stage: no stage text (external MCP clients)");
@@ -575,7 +575,7 @@ test("Research Development through the tools: per-idea workspaces, the window's 
   assert.deepEqual((await call("rd_files", { idea: later })).files.map((f: any) => f.path).sort(), [".gitignore", "README.md"]);
 
   const init: any = await mcpHandle(wb, sid, { jsonrpc: "2.0", id: 1, method: "initialize", params: {} }, "research", kelly);
-  assert.match(init.result.instructions, /Research Development stage for one pursued idea/);
+  assert.match(init.result.instructions, /Develop stage \(Research Development\) for one pursued idea/);
   assert.match(init.result.instructions, /develops is “Kelly with a drawdown cap” \(r:[0-9a-f-]+, v1\)/);
 });
 

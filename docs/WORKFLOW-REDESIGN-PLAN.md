@@ -44,7 +44,7 @@ What it should feel like:
 
 - **An agent's write lands only on the idea its session belongs to.** Navigating the window never changes that.
 - **A run records what actually executed:** commit, command, data, environment, hardware.
-- **Nothing a run or candidate used can be deleted** while that run or candidate is kept.
+- **Nothing a release candidate used can be deleted** while the candidate is kept; exploratory runs keep the names and hashes of the data they used.
 - **The window and the agent go through the same operations,** with the same checks (docs/PRINCIPLES.md).
 
 ## 4 Problems this plan fixes
@@ -268,6 +268,13 @@ What remains:
 - **Create release candidate** builds a Candidate. Its validation is a run of the candidate's entry point.
 - **Registry tools** for runs and candidates, plus the Develop guidance (P7).
 - **Navigation switch** to ideas and Explore, Develop and Release. The Design & Code, Backtests and Results stages go; legacy records stay readable. This sits behind one setting while it settles.
+
+**Status, 26 September 2026:** phase 2 is implemented and checked end to end in the app: a real run from **Run ▸ train**, then a candidate created, validated and passed. Where it differs from the list above:
+
+- **Rail:** it lists Ideas, Explore, Develop and Release, with the pursued ideas below them. Stage ids and conversations are unchanged, so each mode still has its own conversation until phase 3.
+- **Retention:** snapshots are kept for release candidates (current and earlier), not for every exploratory run. A deleted snapshot stays named in the runs that used it.
+- **Environment:** the app records the lock and the environment files; it does not build the environment. A run uses whatever the command sets up (e.g. `uv run`).
+- **Legacy stages:** Design & Code, Backtests and Results remain behind **Show legacy stages**, which is the one setting.
 
 ### Phase 3: risks, one conversation, ML views (medium)
 

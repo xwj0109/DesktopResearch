@@ -23,10 +23,13 @@ test('drafts are isolated by workspace and stage without mutating previous state
 test('stage layouts honour the pane contract; Design & Code is Pi / graph / code', () => {
   for (const layout of Object.values(stageLayouts)) assert.deepEqual(layout.a, ['pi']);
   assert.deepEqual(stageLayouts.code.b, ['graph']);
-  assert.deepEqual(stageLayouts.code.c, ['code']);
-  // Research Development: the idea's Pi on the left; its workspace, spec and sources on the right.
+  // Legacy Design & Code keeps the earlier records: code, spec and data contract.
+  assert.deepEqual(stageLayouts.code.c, ['code', 'spec', 'data']);
+  // Develop: the idea's Pi on the left; runs, documents, changes, files and data on the right.
   assert.equal(stageLayouts.research.b, undefined);
-  assert.deepEqual(stageLayouts.research.c, ['files', 'changes', 'documents', 'snapshots', 'spec', 'sources']);
+  assert.deepEqual(stageLayouts.research.c, ['runs', 'documents', 'changes', 'files', 'snapshots']);
+  // Release: the candidate first, then the live data it needs.
+  assert.deepEqual(stageLayouts.data.c, ['candidate', 'feeds', 'explorer', 'quality']);
   assert.ok(stageLayouts.ideas.c.includes('sources'));
   assert.equal(activeTab('c', stageLayouts.results, { tabs: { c: 'conclusion' } }), 'conclusion');
   assert.equal(activeTab('c', stageLayouts.results, { tabs: { c: 'graph' } }), 'results', 'foreign tab ignored');
@@ -87,7 +90,7 @@ import { effectiveLayout, swapSlots, tileRects, neighbor, tileOrder, resizeTile,
 
 test('swapped slots must be a permutation of the stage panes; swap exchanges contents and tabs', () => {
   const code = stageLayouts.code;
-  assert.equal(effectiveLayout(code, { slots: { a: ['code'], c: ['pi'] } }).a[0], 'code');
+  assert.equal(effectiveLayout(code, { slots: { a: ['graph'], b: ['pi'] } }).a[0], 'graph');
   assert.equal(effectiveLayout(code, { slots: { a: ['results'] } }), code, 'foreign pane rejected');
   assert.equal(effectiveLayout(code, { slots: { a: ['pi'], b: ['pi'] } }), code, 'duplicate rejected');
   const swapped = swapSlots(stageLayouts.results, { tabs: { c: 'conclusion' } }, 'a', 'c');
