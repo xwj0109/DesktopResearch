@@ -5870,3 +5870,19 @@ tr.clickable:hover {
 .bar-cell .v {
   position: relative;
 }
+/* The idea strip takes its own line under the idea tabs, so nothing is cut short. */
+.rd-bar {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+.rd-bar > .idea-status {
+  order: 10;
+  flex-basis: 100%;
+  margin: 0 -6px 4px;
+}
+.idea-status .is-item {
+  max-width: 48ch;
+}
+.idea-context .risk {
+  display: block;
+}

@@ -35,6 +35,15 @@ Decided 2026-09-26 (docs/WORKFLOW-REDESIGN-PLAN.md, phase 2). Results that will 
 - **Agents run within a limit** (default 5 runs and 60 run minutes per hour); only the user changes it.
 - **Release candidates are validated by a run** of their entry on exactly their checkpoint.
 
+## Risks and one thread per idea
+
+Decided 2026-09-26 (plan, phase 3).
+
+- **Risks on every saved idea.** Each risk is a sentence on what could make the idea unusable in practice, with a status (unknown, estimated, measured ok, failed, waived). The agent drafts the first 3–5. Cheap runs test the most fundamental first and become their evidence.
+- **Failing a risk halfway is an ordinary outcome.** The strip shows it, old results stay as they were, and you revise, work around it or stop. A release candidate with a failed risk needs a stated reason.
+- **One conversation per idea** runs through Explore, Develop and Release. It reads `idea_context` for where the idea stands, and you see the same summary as **What the AI sees**.
+- **Bounded searches** use run batches. The app writes their summary into the workspace when the last run ends.
+
 ## Sending an idea on
 
 When you are convinced, one idea is sent from Research Development to the production stages. From then on, Data, Design & Code, Backtests and Results work towards production code, backtests and outputs, all traceable to that idea's exact version. Other pursued ideas stay in the exploratory stages. Two ideas that are both worth building become two strategies, which a portfolio can compare or combine.

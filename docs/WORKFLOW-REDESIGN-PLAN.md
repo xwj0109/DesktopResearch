@@ -286,6 +286,15 @@ What remains:
   - **Resources** per run: wall time, peak memory, GPU if present
   - the graph becomes optional, with zoom-to-fit
 
+**Status, 26 September 2026:** phase 3 is implemented and checked in the app. Where it differs from the list above:
+
+- **The brief is the idea itself.** Its rationale, universe, horizon and "what would change your mind" already are the brief. Risks sit beside it: the Ideas and Develop agents are told to draft 3–5 of them, and **Ask Pi to draft them** in the idea editor does the same.
+- **Stale rule:** a measured risk goes stale when its evidence run used other data or another environment than the idea's latest run, or ran on code before the current release candidate. A code change alone doesn't mark it stale; that would mark everything stale at every checkpoint.
+- **Conversations:** Develop, Explore (when focused on an idea) and Release (when there is a candidate) share the idea's conversation. The Ideas board, Explore's "All ideas" overview, Release without a candidate and the legacy stages keep their own. Earlier stage conversations stay in Pi's session list.
+- **Resources:** wall time and peak memory, next to each run's metrics. GPU use isn't recorded: macOS offers no per-process GPU figure without extra tools.
+- **Graph:** it is optional, because it now lives only in the legacy Design & Code stage. Zoom-to-fit wasn't done.
+- **Batches:** a batch is up to 20 runs of one checkpoint, checked against the agent limit as a whole. The summary is `reports/batch-….md` in the workspace, marked **new** in Documents.
+
 ### When needed (not scheduled; start one when its trigger happens)
 
 | Item | Trigger |
