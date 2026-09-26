@@ -261,7 +261,7 @@ export function researchDTO(value: any, route: string): unknown {
   if (/\/native\/production\/preview\?/.test(route)) return pick(value, ["idea", "title", "version", "pursued", "checkpoint", "pending", "snapshots", "current", "entries", "defaultEntry", "risks", "failedRisks"]);
   if (/\/native\/production\/commit$/.test(route)) return pick(value, ["idea", "title", "version", "hash", "checkpoint", "checkpointMessage", "snapshots", "note", "committedAt", "number", "entry", "risks", "acceptedFailedRisks"]);
   // Runs: records the backend wrote from what executed (no credentials or paths beyond the run's own).
-  if (/\/native\/runs\?idea=/.test(route)) return pick(value, ["idea", "entries", "manifestError", "runs", "limit", "agentUsage"]);
+  if (/\/native\/runs\?idea=/.test(route)) return pick(value, ["idea", "entries", "manifestError", "features", "runs", "limit", "agentUsage"]);
   if (/\/native\/runs\/(status\?|submit$|cancel$)/.test(route)) return value;
   if (/\/native\/runs\/log\?/.test(route)) return pick(value, ["text", "offset", "next", "size"]);
   if (/\/native\/runs\/compare\?/.test(route)) return pick(value, ["a", "b", "differences", "warnings", "metrics", "usage"]);

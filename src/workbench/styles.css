@@ -5838,3 +5838,35 @@ button.link {
 .idea-context-body ol {
   padding-left: 18px;
 }
+
+/* Features and run resources (Develop). */
+.features-pane {
+  padding: 10px 12px;
+  overflow: auto;
+  font-size: 12px;
+}
+.features-pane td.warn {
+  color: var(--yellow);
+}
+tr.clickable {
+  cursor: pointer;
+}
+tr.clickable:hover {
+  background: var(--fill-2);
+}
+.bar-cell {
+  position: relative;
+  display: inline-block;
+  min-width: 90px;
+}
+.bar-cell .bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  z-index: 0;
+}
+.bar-cell .v {
+  position: relative;
+}

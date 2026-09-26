@@ -650,7 +650,7 @@ export const tools: WorkbenchTool[] = [
     ideaField: "idea",
     title: "List runs",
     description:
-      "An idea's runs, newest first (status, entry or command, checkpoint, time, key metrics), the entries its research.toml offers, and the agent run limit with what has been used in the last hour.",
+      "An idea's runs, newest first (status, entry or command, checkpoint, time, key metrics), the entries and features its research.toml declares ([[feature]] name, source, lookback, available_after: how long after the event the value is known), and the agent run limit with what has been used in the last hour.",
     input: z.object({ idea: rdIdea, limit: z.number().int().min(1).max(200).optional() }).strict(),
     readOnly: true,
     run: async ({ sid, wb }, { idea, limit }) => wb.runsOverview(sid, idea, limit),
@@ -1465,6 +1465,8 @@ export class Workbench {
       idea: target,
       entries: entriesOf(manifest),
       manifestError: error,
+      // [[feature]] from research.toml: what the model uses, and when each is known.
+      features: (manifest?.feature ?? []).map((f) => ({ ...f, name: f.name })),
       runs: this.runs.list(sid, target).slice(0, limit).map(runSummary),
       limit: this.runLimit(sid),
       agentUsage: this.agentUsage(sid),

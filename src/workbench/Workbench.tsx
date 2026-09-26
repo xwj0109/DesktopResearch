@@ -46,7 +46,7 @@ import { IdeaBoard } from "./panes/IdeaBoard";
 import { GraphPane } from "./panes/GraphPane";
 import { CodePane } from "./panes/CodePane";
 import { DataPane, PortfolioPane, ResultsPane, RunsPane as ExperimentsPane } from "./panes/EvidencePanes";
-import { CandidatePane, RunsPane } from "./panes/Runs";
+import { CandidatePane, FeaturesPane, RunsPane } from "./panes/Runs";
 import { LEGACY_STAGES } from "./stages";
 import { chooseIdea, chosenIdea, conversationFor } from "../workbench-contract";
 import { FeedExplorerPane, FeedQualityPane, FeedsPane } from "./panes/Feeds";
@@ -269,6 +269,8 @@ function ResearchPane({ kind, stage }: { kind: PaneKind; stage: string }) {
       return <ExperimentsPane />;
     case "candidate":
       return <CandidatePane />;
+    case "features":
+      return <FeaturesPane />;
     case "results":
       return <ResultsPane />;
     case "conclusion":

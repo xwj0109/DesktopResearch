@@ -19,6 +19,7 @@ export type PaneKind =
   | "runs"
   | "experiments"
   | "candidate"
+  | "features"
   | "results"
   | "conclusion"
   | "portfolio";
@@ -43,6 +44,7 @@ export const paneLabels: Record<PaneKind, string> = {
   runs: "Runs",
   experiments: "Experiments",
   candidate: "Candidate",
+  features: "Features",
   results: "Results",
   conclusion: "Conclusion",
   portfolio: "Evidence",
@@ -65,6 +67,7 @@ export const paneGlyphs: Record<PaneKind, string> = {
   runs: "▶",
   experiments: "▷",
   candidate: "◎",
+  features: "ƒ",
   results: "◩",
   conclusion: "✓",
   portfolio: "◈",
@@ -85,7 +88,7 @@ export const stageLayouts: Record<LayoutStage, StageLayout> = {
   ideas: { a: ["pi"], c: ["idea", "sources"], split: 0.46, stack: 0.6 },
   literature: { a: ["pi"], c: ["sources"], split: 0.44, stack: 0.6 },
   // One workspace per pursued idea: its Pi on the left, its work on the right.
-  research: { a: ["pi"], c: ["runs", "documents", "changes", "files", "snapshots"], split: 0.4, stack: 0.6 },
+  research: { a: ["pi"], c: ["runs", "documents", "changes", "features", "files", "snapshots"], split: 0.4, stack: 0.6 },
   // Production data for the idea in production: live feeds, what they hold, their quality, the contract.
   // Release: the candidate, and the live data it needs.
   data: { a: ["pi"], c: ["candidate", "feeds", "explorer", "quality"], split: 0.4, stack: 0.6 },
@@ -164,6 +167,7 @@ export const paneBlurbs: Record<PaneKind, string> = {
   runs: "The workspace's code run as recorded runs: what ran, metrics, outputs, logs; compare two.",
   experiments: "Queue reference experiments; inspect exact inputs, status history and logs.",
   candidate: "The release candidate: its exact checkpoint, data and checks, and validating it.",
+  features: "The features research.toml declares: source, lookback and when each value is known.",
   results: "Disclosed results: equity and drawdown, interval references and lineage.",
   conclusion: "Interpretation with supporting and contradicting evidence and limitations.",
   portfolio: "Frozen strategy evidence, portfolio analyses and producer feedback.",

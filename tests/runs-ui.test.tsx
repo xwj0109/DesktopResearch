@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import React from "react";
 import { create, act } from "react-test-renderer";
 import { ResearchProvider } from "../src/workbench/research";
-import { CandidatePane, RunsPane } from "../src/workbench/panes/Runs";
+import { CandidatePane, FeaturesPane, RunsPane } from "../src/workbench/panes/Runs";
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 const IDEA = "r:11111111-1111-4111-8111-111111111111";
@@ -23,7 +23,7 @@ function harness() {
   let runs = [summary(A, 1.2, "c".repeat(40))];
   const client = {
     read: async (path: string) => {
-      if (path.startsWith("/native/runs?idea=")) return { idea: IDEA, entries: [{ name: "train", command: "sh train.sh", description: null }], manifestError: null, runs, limit: { runs: 5, minutes: 60 }, agentUsage: { runs: 1, minutes: 10 } };
+      if (path.startsWith("/native/runs?idea=")) return { idea: IDEA, entries: [{ name: "train", command: "sh train.sh", description: null }], manifestError: null, features: [{ name: "funding_z", source: "fundingRate", lookback: "30d", available_after: "0s" }, { name: "depth_imb", source: "bookDepth", window: 10 }], runs, limit: { runs: 5, minutes: 60 }, agentUsage: { runs: 1, minutes: 10 } };
       if (path.startsWith("/native/runs/status?run=")) {
         const r = runs.find((x) => path.endsWith(x.id))!;
         return { ...r, environment: { lock: { file: "uv.lock", sha256: "f".repeat(64) }, files: ["uv.lock"], shell: "/bin/sh" }, hardware: { platform: "darwin", arch: "arm64", cpu: "Apple M5 Max", cores: 18, memoryBytes: 2 ** 37 }, snapshots: [{ name: "prices", sha256: "e".repeat(64) }], outputs: [{ path: "metrics.json", bytes: 20, sha256: "d".repeat(64) }], wallSeconds: 3600, logTail: "fitting…\ndone" };
@@ -85,6 +85,30 @@ test("Runs pane: start an entry, see what ran and its metrics, compare two runs,
   await act(async () => r.root.findByProps({ "aria-label": "Runs per hour" }).props.onChange({ target: { value: "2" } }));
   await act(async () => r.root.findAll((n) => n.type === "form" && n.props.className === "runs-limit")[0].props.onSubmit({ preventDefault() {} }));
   assert.deepEqual(h.writes.at(-1), ["/native/runs/limit", { runs: 2, minutes: 60 }]);
+});
+
+test("Features show when each value is known; Resources show what every run cost", async (t) => {
+  const h = harness();
+  let r!: ReturnType<typeof create>;
+  await act(async () => { r = create(<ResearchProvider value={h.scope}><FeaturesPane /></ResearchProvider>); });
+  t.after(() => act(async () => r.unmount()));
+  await settle();
+  const table = text(r.root.findByProps({ "aria-label": "Features" }));
+  assert.match(table, /funding_zfundingRate30d0s/);
+  assert.match(table, /depth_imbbookDepth▲ not statedwindow=10/);
+  assert.match(text(r.root), /Ask Pi to check 1 timing/);
+  // Resources: toggled in the Runs pane once there are two runs.
+  let p!: ReturnType<typeof create>;
+  await act(async () => { p = create(<ResearchProvider value={h.scope}><RunsPane /></ResearchProvider>); });
+  t.after(() => act(async () => p.unmount()));
+  await settle();
+  await act(async () => p.root.findAllByType("button").find((b) => text(b).includes("Run ▸ train"))!.props.onClick());
+  await settle();
+  await act(async () => { p.update(<ResearchProvider value={h.scope}><RunsPane /></ResearchProvider>); });
+  await settle();
+  await act(async () => p.root.findAllByType("button").find((b) => text(b) === "Resources")!.props.onClick());
+  const res = text(p.root.findByProps({ "aria-label": "Run resources" }));
+  assert.match(res, /trainddddddd✓ succeeded4\.0 s62\.0 MiB1\.5trainccccccc✓ succeeded4\.0 s62\.0 MiB1\.2/);
 });
 
 test("Candidate pane without a candidate points to Develop", async () => {

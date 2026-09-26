@@ -27,7 +27,7 @@ test('stage layouts honour the pane contract; Design & Code is Pi / graph / code
   assert.deepEqual(stageLayouts.code.c, ['code', 'spec', 'data']);
   // Develop: the idea's Pi on the left; runs, documents, changes, files and data on the right.
   assert.equal(stageLayouts.research.b, undefined);
-  assert.deepEqual(stageLayouts.research.c, ['runs', 'documents', 'changes', 'files', 'snapshots']);
+  assert.deepEqual(stageLayouts.research.c, ['runs', 'documents', 'changes', 'features', 'files', 'snapshots']);
   // Release: the candidate first, then the live data it needs.
   assert.deepEqual(stageLayouts.data.c, ['candidate', 'feeds', 'explorer', 'quality']);
   assert.ok(stageLayouts.ideas.c.includes('sources'));

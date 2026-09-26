@@ -32,6 +32,7 @@ interface Overview {
   idea: string;
   entries: { name: string; command: string; description: string | null }[];
   manifestError: string | null;
+  features?: ({ name: string; source?: string; lookback?: string; available_after?: string } & Record<string, unknown>)[];
   runs: Summary[];
   limit: { runs: number; minutes: number };
   agentUsage: { runs: number; minutes: number };
@@ -69,6 +70,7 @@ export function RunsPane() {
   const [minutes, setMinutes] = useState(60);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [resources, setResources] = useState(false);
   if (!dev) return <p className="rd-empty">Choose a pursued idea to develop in the bar above.</p>;
   const o = overview.data;
   const runs = o?.runs ?? [];
@@ -120,6 +122,11 @@ export function RunsPane() {
             </p>
           )}
           {error && <p className="notice error">{error}</p>}
+          {runs.length > 1 && (
+            <button className={`btn small ${resources ? "primary" : "ghost"}`} aria-pressed={resources} title="Wall time, peak memory and key metrics of every run" onClick={() => setResources((x) => !x)}>
+              Resources
+            </button>
+          )}
         </div>
         {runs.map((r) => (
           <button
@@ -127,6 +134,7 @@ export function RunsPane() {
             className={`run-row ${selected?.id === r.id && !comparing ? "on" : ""} ${comparing?.includes(r.id) ? "cmp" : ""}`}
             title="Click to open · ⇧-click to compare with the open run"
             onClick={(e) => {
+              setResources(false);
               if (e.shiftKey && selected && selected.id !== r.id) scope.setDraft(`${runKey(dev.target)}:compare`, `${selected.id},${r.id}`);
               else {
                 scope.setDraft(runKey(dev.target), r.id);
@@ -155,7 +163,9 @@ export function RunsPane() {
         {o && !runs.length && <p className="rd-empty">No runs yet.</p>}
         {o && <AgentLimit limit={o.limit} used={o.agentUsage} onSaved={() => void overview.reload()} />}
       </nav>
-      {comparing ? (
+      {resources ? (
+        <ResourcesTable runs={runs} onOpen={(id) => (setResources(false), scope.setDraft(runKey(dev.target), id), scope.setDraft(`${runKey(dev.target)}:compare`, ""))} />
+      ) : comparing ? (
         <RunCompare a={comparing[0]} b={comparing[1]} onClose={() => scope.setDraft(`${runKey(dev.target)}:compare`, "")} />
       ) : selected ? (
         <RunDetail id={selected.id} others={runs.filter((r) => r.id !== selected.id)} onCompare={(other) => scope.setDraft(`${runKey(dev.target)}:compare`, `${selected.id},${other}`)} />
@@ -514,6 +524,131 @@ export function CandidatePane() {
         {s.earlier > 0 && <p className="rd-empty">{s.earlier} earlier candidate{s.earlier === 1 ? "" : "s"} kept.</p>}
       </nav>
       {shown ? <RunDetail id={shown.id} /> : <p className="rd-empty">Validate the candidate: its entry runs on exactly its checkpoint, not the workspace's later changes.</p>}
+    </div>
+  );
+}
+
+/** Every run's cost next to its results: wall time, peak memory and key metrics. */
+function ResourcesTable({ runs, onOpen }: { runs: Summary[]; onOpen: (id: string) => void }) {
+  const names = [...new Set(runs.flatMap((r) => Object.keys(r.metrics).slice(0, 3)))].slice(0, 4);
+  const peak = Math.max(1, ...runs.map((r) => r.usage?.peakMemoryBytes ?? 0));
+  return (
+    <div className="rd-viewer run-resources">
+      <div className="rd-viewer-head">
+        <span className="path">Resources</span>
+        <span className="dim">what each run cost, next to what it found</span>
+      </div>
+      <div className="rd-viewer-body run-body">
+        <div className="table-wrap">
+          <table aria-label="Run resources">
+            <thead>
+              <tr>
+                <th>run</th>
+                <th>checkpoint</th>
+                <th>status</th>
+                <th>wall time</th>
+                <th>peak memory</th>
+                {names.map((n) => (
+                  <th key={n}>{n}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map((r) => (
+                <tr key={r.id} onClick={() => onOpen(r.id)} className="clickable">
+                  <th>{label(r)}</th>
+                  <td>
+                    <code>{r.commit.slice(0, 7)}</code>
+                  </td>
+                  <td className={`st-${r.status}`}>
+                    {GLYPH[r.status]} {r.status}
+                  </td>
+                  <td>{duration(r.usage?.wallSeconds)}</td>
+                  <td>
+                    {r.usage?.peakMemoryBytes ? (
+                      <span className="bar-cell">
+                        <span className="bar" style={{ width: `${Math.round((r.usage.peakMemoryBytes / peak) * 100)}%` }} />
+                        <span className="v">{bytes(r.usage.peakMemoryBytes)}</span>
+                      </span>
+                    ) : (
+                      ""
+                    )}
+                  </td>
+                  {names.map((n) => (
+                    <td key={n}>{r.metrics[n] === undefined ? "" : metric(r.metrics[n])}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Develop → Features: what research.toml says the model uses, and when each value is known. */
+export function FeaturesPane() {
+  const scope = useResearch();
+  const dev = developingIdea(scope.view, scope.drafts);
+  const o = usePoll<Overview>(dev ? `/native/runs?idea=${dev.target}` : null, 2000).data;
+  if (!dev) return <p className="rd-empty">Choose a pursued idea to develop in the bar above.</p>;
+  const features = o?.features ?? [];
+  const known = new Set(["name", "source", "lookback", "available_after"]);
+  const untimed = features.filter((f) => !f.available_after);
+  if (o && !features.length)
+    return (
+      <div className="features-pane">
+        <p className="rd-empty">
+          No features declared. List them in <code>research.toml</code> as <code>[[feature]]</code> with <code>name</code>, <code>source</code>, <code>lookback</code> and <code>available_after</code> (how long after the event the value is known), so timing and data needs are visible before they surprise you.
+        </p>
+        <button className="btn small ghost" onClick={() => scope.appendComposer("Declare the features the model uses in research.toml as [[feature]] entries (name, source, lookback, available_after), from the code.")}>
+          Ask Pi to declare them
+        </button>
+      </div>
+    );
+  return (
+    <div className="features-pane">
+      <p className="dim">
+        Each value has to be known at the decision time. <b>Known after</b> is how long after the event it becomes available; a feature without it is an open timing risk.
+        {untimed.length > 0 && (
+          <>
+            {" "}
+            <button className="btn small ghost" onClick={() => scope.appendComposer(`Check when these features are known at decision time and add available_after in research.toml: ${untimed.map((f) => f.name).join(", ")}. Add a timing risk (risk_add) for any that could arrive too late.`)}>
+              Ask Pi to check {untimed.length} timing{untimed.length === 1 ? "" : "s"}
+            </button>
+          </>
+        )}
+      </p>
+      <div className="table-wrap">
+        <table aria-label="Features">
+          <thead>
+            <tr>
+              <th>feature</th>
+              <th>source</th>
+              <th>lookback</th>
+              <th>known after</th>
+              <th>other</th>
+            </tr>
+          </thead>
+          <tbody>
+            {features.map((f) => (
+              <tr key={f.name}>
+                <th>{f.name}</th>
+                <td>{f.source ?? ""}</td>
+                <td>{f.lookback ?? ""}</td>
+                <td className={f.available_after ? "" : "warn"}>{f.available_after ?? "▲ not stated"}</td>
+                <td className="dim">
+                  {Object.entries(f)
+                    .filter(([k]) => !known.has(k))
+                    .map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`)
+                    .join(" · ")}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
