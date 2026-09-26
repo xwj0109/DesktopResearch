@@ -30,6 +30,29 @@ export function chosenIdea<T extends { target: string }>(pursued: T[], drafts: R
 /** Literature's focus: the current idea, unless it shows all pursued ideas. */
 export const literatureFocus = <T extends { target: string }>(pursued: T[], drafts: Record<string, string>) =>
   drafts[LITERATURE_OVERVIEW] === "1" ? undefined : chosenIdea(pursued, drafts);
+/** The Pi conversation a stage shows (docs/WORKFLOW-REDESIGN-PLAN.md §7.2): one
+ * per idea, `research:<id>`, shared by Develop (the current idea), Explore (the
+ * focused idea) and Release (the release candidate's idea). Explore's
+ * overview, Release without a candidate, Ideas and the legacy stages keep their
+ * stage's own. Null: Develop with no pursued idea yet. */
+export function conversationFor(
+  stage: string,
+  view: { pursued?: { target: string }[]; production?: { current?: { idea: string } | null } } | null | undefined,
+  drafts: Record<string, string>,
+): string | null {
+  const pursued = view?.pursued ?? [];
+  const idea = (t: string) => `research:${t.slice(2)}`;
+  if (stage === "research") {
+    const t = chosenIdea(pursued, drafts)?.target ?? pursued[0]?.target;
+    return t ? idea(t) : null;
+  }
+  if (stage === "literature") {
+    const f = literatureFocus(pursued, drafts);
+    return f ? idea(f.target) : stage;
+  }
+  if (stage === "data" && view?.production?.current) return idea(view.production.current.idea);
+  return stage;
+}
 /** Make an idea the window's current one (Literature then focuses it too). */
 export function chooseIdea(setDraft: (key: string, value: string) => void, target: string) {
   setDraft(CURRENT_IDEA, target);

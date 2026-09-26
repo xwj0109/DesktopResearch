@@ -48,7 +48,7 @@ import { CodePane } from "./panes/CodePane";
 import { DataPane, PortfolioPane, ResultsPane, RunsPane as ExperimentsPane } from "./panes/EvidencePanes";
 import { CandidatePane, RunsPane } from "./panes/Runs";
 import { LEGACY_STAGES } from "./stages";
-import { chooseIdea, chosenIdea } from "../workbench-contract";
+import { chooseIdea, chosenIdea, conversationFor } from "../workbench-contract";
 import { FeedExplorerPane, FeedQualityPane, FeedsPane } from "./panes/Feeds";
 import { useStageActivity } from "./useStageActivity";
 import {
@@ -350,10 +350,12 @@ export function Workbench({ data, native }: { data: WorkbenchData; native?: Nati
   const legacyShown = researchDrafts[LEGACY_STAGES] === "1";
   const shownStages = data.stages.filter((s) => legacyShown || !s.legacy);
   const research = useResearchData(native?.client);
-  // The Pi conversation for this pane: the stage's, or in Research Development
-  // the developing idea's own (null until there is a pursued idea to develop).
+  // One conversation per idea (docs/WORKFLOW-REDESIGN-PLAN.md §7.2): Develop
+  // uses the current idea's, Explore the focused idea's, Release the release
+  // candidate's. Explore's overview, Release without a candidate, Ideas and the
+  // legacy stages keep their stage's own conversation.
   const devIdea = stage === "research" && !portfolio ? developingIdea(research.view, researchDrafts) : null;
-  const conversationId = portfolio ? "portfolio" : stage === "research" ? (devIdea ? `research:${devIdea.target.slice(2)}` : null) : stage;
+  const conversationId = portfolio ? "portfolio" : conversationFor(stage, research.view, researchDrafts);
   const activity = useStageActivity(
     native?.client,
     native?.kind === "strategy" ? data.stages.map((s) => s.id) : [],

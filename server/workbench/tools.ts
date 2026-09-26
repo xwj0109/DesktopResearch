@@ -104,6 +104,14 @@ export const STAGE_GUIDANCE: Record<(typeof stageIds)[number], string> = {
   backtests: "This conversation is the Backtests stage: plan and run experiments with exact inputs.",
   results: "This conversation is the Results stage: interpret results and write conclusions.",
 };
+/** A conversation bound to one idea follows it through Explore, Develop and Release. */
+export const IDEA_GUIDANCE = [
+  "This conversation belongs to one pursued idea and follows it through the stages: Explore (its literature), Develop (its workspace and runs) and Release (its release candidate).",
+  "idea_context says where the idea stands and which stage the window shows (window.stage: literature = Explore, research = Develop, data = Release); act for that stage, and keep the same thread of work across them.",
+  `In Explore: ${STAGE_GUIDANCE.literature}`,
+  `In Develop: ${STAGE_GUIDANCE.research}`,
+  `In Release: ${STAGE_GUIDANCE.data}`,
+].join(" ");
 export const isStage = (s: unknown): s is (typeof stageIds)[number] => typeof s === "string" && (stageIds as readonly string[]).includes(s);
 
 /** Guidance shared by every runtime (Pi prompt guidelines, MCP instructions). */
