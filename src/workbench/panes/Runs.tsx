@@ -3,6 +3,7 @@ import { useResearch } from "../research";
 import { usePoll } from "../usePoll";
 import { formatTime } from "../transcript";
 import { AskPi, RdViewer, developingIdea, type RdFile } from "./ResearchDev";
+import { RunAsEvidence, riskSummary, type RiskList } from "./Risks";
 
 /** Runs (Develop) and the release candidate (Release): the workspace's code,
  * executed by the app as recorded runs (server/workbench/runs.ts). The panes
@@ -254,6 +255,7 @@ export function RunDetail({ id, others = [], onCompare }: { id: string; others?:
       <div className="rd-viewer-body run-body">
         {error && <p className="notice error">{error}</p>}
         {r.reason && <p className={`notice ${r.status === "succeeded" ? "" : "error"}`}>{r.reason}</p>}
+        {!running && <RunAsEvidence idea={r.idea} run={r.id} />}
         <dl className="data-meta">
           <dt>checkpoint</dt>
           <dd>
@@ -414,7 +416,7 @@ interface CandidateStatus {
     entry?: string;
     note?: string;
   };
-  checks?: { environmentLock: boolean; snapshotsKept: number; entry: string | null };
+  checks?: { environmentLock: boolean; snapshotsKept: number; entry: string | null; risks?: RiskList["counts"] };
   state?: "not validated" | "validating" | "passed" | "failed";
   validationRuns?: Summary[];
   earlier: number;
@@ -473,6 +475,16 @@ export function CandidatePane() {
             {c.snapshots.length ? "✓" : "·"} {c.snapshots.length} data snapshot{c.snapshots.length === 1 ? "" : "s"} kept{c.snapshots.length ? `: ${c.snapshots.map((x) => x.name).join(", ")}` : ""}
           </li>
           <li className={s.checks?.environmentLock ? "ok" : "warn"}>{s.checks?.environmentLock ? "✓ environment lock (uv.lock)" : "▲ no environment lock: validation can't be rebuilt exactly (add uv.lock)"}</li>
+          {(() => {
+            const rs = riskSummary(s.checks?.risks);
+            return rs ? (
+              <li className={rs.level === "ok" ? "ok" : "warn"}>
+                <button className="link" title="Open the idea's risks" onClick={() => (scope.setDraft("ideas:active", c.idea), scope.goToStage?.("ideas", "idea"))}>
+                  {rs.level === "ok" ? "✓" : "▲"} {rs.text}
+                </button>
+              </li>
+            ) : null;
+          })()}
           <li className={s.checks?.entry ? "ok" : "warn"}>
             {s.checks?.entry ? (
               <>

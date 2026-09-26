@@ -5727,3 +5727,70 @@ td.down {
 .candidate-pane .section-title {
   padding: 8px 10px 4px;
 }
+
+/* Risks (idea editor, strip, candidate). */
+.idea-status .is-item.err {
+  color: var(--red);
+}
+.risks .risk-list {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.risk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.risk .g {
+  width: 1.5ch;
+  text-align: center;
+  color: var(--text-dim);
+}
+.risk.st-failed .g {
+  color: var(--red);
+}
+.risk.st-measured-ok .g {
+  color: var(--green);
+}
+.risk.st-unknown .g,
+.risk.st-estimated .g {
+  color: var(--yellow);
+}
+.risk .t {
+  flex: 1;
+  min-width: 0;
+}
+.risk .tag {
+  margin-left: 4px;
+}
+.risk-waive,
+.risk-add {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+}
+.risk-waive input,
+.risk-add input {
+  flex: 1;
+  min-width: 0;
+}
+.run-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+button.link {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  padding: 0 2px;
+  cursor: pointer;
+}

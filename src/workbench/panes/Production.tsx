@@ -44,6 +44,7 @@ interface Preview {
   current: { idea: string; version: number; checkpoint: string } | null;
   entries?: { name: string; command: string }[];
   defaultEntry?: string | null;
+  failedRisks?: string[];
 }
 const errorText = (e: unknown) => String(e instanceof Error ? e.message : e).replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
 
@@ -54,6 +55,7 @@ export function SendToProduction({ idea, onClose }: { idea: string; onClose: () 
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [note, setNote] = useState("");
   const [entry, setEntry] = useState("");
+  const [accept, setAccept] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [sent, setSent] = useState(false);
@@ -73,7 +75,7 @@ export function SendToProduction({ idea, onClose }: { idea: string; onClose: () 
     setBusy(true);
     setError("");
     try {
-      await scope.client.write("/native/production/commit", { idea, snapshots: [...picked], ...(note.trim() ? { note: note.trim() } : {}), ...(entry.trim() ? { entry: entry.trim() } : {}) });
+      await scope.client.write("/native/production/commit", { idea, snapshots: [...picked], ...(note.trim() ? { note: note.trim() } : {}), ...(entry.trim() ? { entry: entry.trim() } : {}), ...(accept.trim() ? { acceptFailedRisks: accept.trim() } : {}) });
       setSent(true);
       await scope.refresh().catch(() => {});
     } catch (e) {
@@ -126,6 +128,14 @@ export function SendToProduction({ idea, onClose }: { idea: string; onClose: () 
               ))}
             </fieldset>
           )}
+          {(p.failedRisks?.length ?? 0) > 0 && (
+            <div className="notice error">
+              <p>
+                {p.failedRisks!.length === 1 ? "A risk" : `${p.failedRisks!.length} risks`} of this idea failed: {p.failedRisks!.map((t) => `“${t}”`).join("; ")}. Revise the idea or work around it; to go ahead anyway, say why.
+              </p>
+              <input aria-label="Why go ahead despite failed risks" placeholder="e.g. only affects live trading, not the research result" value={accept} onChange={(e) => setAccept(e.target.value)} />
+            </div>
+          )}
           <label className="prod-entry">
             Validate with{" "}
             {p.entries?.length ? (
@@ -144,7 +154,7 @@ export function SendToProduction({ idea, onClose }: { idea: string; onClose: () 
           <input className="prod-note" aria-label="Note" placeholder="Note (optional), e.g. why this version" value={note} onChange={(e) => setNote(e.target.value)} />
           {error && <p className="notice error">{error}</p>}
           <div className="row-actions">
-            <button className="btn small primary" disabled={busy || p.pending > 0 || !p.pursued} onClick={() => void send()}>
+            <button className="btn small primary" disabled={busy || p.pending > 0 || !p.pursued || ((p.failedRisks?.length ?? 0) > 0 && !accept.trim())} onClick={() => void send()}>
               {busy ? "Creating…" : "Create release candidate"}
             </button>
             <button className="btn small ghost" disabled={busy} onClick={onClose}>

@@ -258,8 +258,8 @@ export function researchDTO(value: any, route: string): unknown {
   if (/\/native\/feeds\/(create|update)$/.test(route)) return value;
   if (/\/native\/feeds\/delete$/.test(route)) return pick(value, ["deleted", "keptData", "bytes"]);
   if (/\/native\/feeds\/service$/.test(route)) return pick(value, ["mode", "enabled", "running", "heartbeatAt", "pid", "feeds", "label", "log"]);
-  if (/\/native\/production\/preview\?/.test(route)) return pick(value, ["idea", "title", "version", "pursued", "checkpoint", "pending", "snapshots", "current", "entries", "defaultEntry"]);
-  if (/\/native\/production\/commit$/.test(route)) return pick(value, ["idea", "title", "version", "hash", "checkpoint", "checkpointMessage", "snapshots", "note", "committedAt", "number", "entry"]);
+  if (/\/native\/production\/preview\?/.test(route)) return pick(value, ["idea", "title", "version", "pursued", "checkpoint", "pending", "snapshots", "current", "entries", "defaultEntry", "risks", "failedRisks"]);
+  if (/\/native\/production\/commit$/.test(route)) return pick(value, ["idea", "title", "version", "hash", "checkpoint", "checkpointMessage", "snapshots", "note", "committedAt", "number", "entry", "risks", "acceptedFailedRisks"]);
   // Runs: records the backend wrote from what executed (no credentials or paths beyond the run's own).
   if (/\/native\/runs\?idea=/.test(route)) return pick(value, ["idea", "entries", "manifestError", "runs", "limit", "agentUsage"]);
   if (/\/native\/runs\/(status\?|submit$|cancel$)/.test(route)) return value;
@@ -267,6 +267,9 @@ export function researchDTO(value: any, route: string): unknown {
   if (/\/native\/runs\/compare\?/.test(route)) return pick(value, ["a", "b", "differences", "warnings", "metrics", "usage"]);
   if (/\/native\/runs\/output\?/.test(route)) return pick(value, ["path", "kind", "bytes", "mime", "base64", "text", "truncated", "tooLarge"]);
   if (/\/native\/runs\/limit$/.test(route)) return pick(value, ["runs", "minutes"]);
+  if (/\/native\/risks\?idea=/.test(route)) return pick(value, ["idea", "risks", "counts"]);
+  if (/\/native\/risks\/(add|set)$/.test(route)) return pick(value, ["idea", "risk"]);
+  if (/\/native\/risks\/delete$/.test(route)) return pick(value, ["deleted"]);
   if (/\/native\/candidate$/.test(route)) return pick(value, ["current", "checks", "state", "validationRuns", "earlier"]);
   if (/\/native\/candidate\/validate$/.test(route)) return value;
   if (/\/native\/rd\/files\?/.test(route)) return pick(value, ["idea", "files"]);

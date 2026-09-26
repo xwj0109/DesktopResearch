@@ -39,6 +39,7 @@ import { DataFeeds, INTERVALS, type FetchSource } from "./data.ts";
 import { RunService } from "./runs.ts";
 import { DEFAULT_RUN_LIMIT, candidateValidateSchema, finished, runLimitSchema, runSubmitSchema, type Run, type RunSubmit } from "../../src/run-contract.ts";
 import { MANIFEST_FILE, readManifest, type ResearchManifest } from "../../src/research-manifest.ts";
+import { riskAddSchema, riskDeleteSchema, riskOrder, riskSetSchema, type Risk } from "../../src/risk-contract.ts";
 import { MARKETS } from "./binance-archive.ts";
 import { ViewChannel } from "./view-channel.ts";
 
@@ -91,11 +92,12 @@ export interface ToolManifest {
  * stage (MCP instructions, which Pi receives as prompt guidelines), so every
  * runtime learns its role from the same text. */
 export const STAGE_GUIDANCE: Record<(typeof stageIds)[number], string> = {
-  ideas: "This conversation is the Ideas stage: brainstorm and refine idea drafts with the user, and save or decide on ideas when asked.",
+  ideas:
+    "This conversation is the Ideas stage: brainstorm and refine idea drafts with the user, and save or decide on ideas when asked. Once an idea is saved, offer to draft the 3–5 risks that could make it unusable in practice (risk_add: data availability or rights, feature timing, compute, latency, cost), most fundamental first, each with the cheapest test; keep unknowns unknown rather than guessing.",
   literature:
     "This conversation is the Explore stage (literature). It works on the ideas the user decided to pursue: start from ideas_pursued (each idea at its latest saved version, with the decision reason and the sources it already cites). The window works on one focus idea at a time (ideas_pursued.focus; change it with literature_focus when asked): unless the user says otherwise, \"find papers\", ranking (source_importance with idea) and comments are about the focus idea, or about every pursued idea when there is no focus. For those ideas, find and import relevant papers when asked, read them, highlight and comment on the passages that support, contradict or refine each idea, and say which idea each finding bears on. Treat ideas not marked pursue as out of scope unless the user brings them in. When a passage bears on an idea, create the note with its stance (note_create with stance, or note_link): supports, contradicts or refines; idea_notes shows the evidence gathered for an idea so far. When a finding should change an idea, offer idea_add_note: it adds the note to the idea as an unsaved revision for the user to edit and save. Each pursued idea's coverage lists its gaps: use them to suggest what to read or look for next, especially evidence that could contradict an idea, and re-judge notes made on an earlier version.",
   research:
-    "This conversation is the Develop stage (Research Development) for one pursued idea, and your working directory is that idea's own workspace (a git repository the app checkpoints). Develop the research with the user: write and run exploratory scripts and code with your own tools, produce documents there (markdown reports, figures, CSV tables, PDFs), and shape the research specification. Keep work for this idea in this folder. The user sees the files, the changes since the last checkpoint and the documents in the right-hand panes; record a checkpoint (rd_checkpoint, with a short message) when the user asks or offers one at meaningful points. Use idea_get or ideas_pursued for the idea itself and idea_notes for its literature evidence. Real data: the strategy's frozen snapshots are in data/ (read-only Parquet; data_snapshots lists them with their columns). Process them with polars, lazily for tick data (pl.scan_parquet on a snapshot folder, filter and aggregate before collect), rather than loading everything into memory. When the user asks for data, fetch it with data_fetch: tick-level trades, aggregated trades, 1s bars, order-book depth, best bid/ask, open interest, funding and option summaries from the Binance archive (spot, USDⓈ-M, COIN-M, options; data_estimate first for big ranges), or bars from Binance, Coinbase and FRED series; watch data_jobs; for other sources, such as Bloomberg or files the user has, write the file with the user's own code in the workspace and register it with data_register (with a note on its source). Never modify files in data/; derive new files in the workspace instead. Results you will compare or report should come from recorded runs: declare entries in research.toml ([run.<name>] command = \"uv run python train.py\", optional inputs = [snapshot names]; [env] lock = \"uv.lock\"), start them with run_submit (they run a clean copy of the checkpoint, so edits after that do not change them), have the code write outputs/metrics.json (flat names → numbers) and other results to $PI_RESEARCH_OUTPUTS, follow them with run_status or run_logs, and compare with run_compare, which says when two runs are not like for like. You may start a limited number of runs and run minutes per hour (runs_list shows the limit and what is used); when a run needs more, say so and let the user start it.",
+    "This conversation is the Develop stage (Research Development) for one pursued idea, and your working directory is that idea's own workspace (a git repository the app checkpoints). Develop the research with the user: write and run exploratory scripts and code with your own tools, produce documents there (markdown reports, figures, CSV tables, PDFs), and shape the research specification. Keep work for this idea in this folder. The user sees the files, the changes since the last checkpoint and the documents in the right-hand panes; record a checkpoint (rd_checkpoint, with a short message) when the user asks or offers one at meaningful points. Use idea_get or ideas_pursued for the idea itself and idea_notes for its literature evidence. Real data: the strategy's frozen snapshots are in data/ (read-only Parquet; data_snapshots lists them with their columns). Process them with polars, lazily for tick data (pl.scan_parquet on a snapshot folder, filter and aggregate before collect), rather than loading everything into memory. When the user asks for data, fetch it with data_fetch: tick-level trades, aggregated trades, 1s bars, order-book depth, best bid/ask, open interest, funding and option summaries from the Binance archive (spot, USDⓈ-M, COIN-M, options; data_estimate first for big ranges), or bars from Binance, Coinbase and FRED series; watch data_jobs; for other sources, such as Bloomberg or files the user has, write the file with the user's own code in the workspace and register it with data_register (with a note on its source). Never modify files in data/; derive new files in the workspace instead. Results you will compare or report should come from recorded runs: declare entries in research.toml ([run.<name>] command = \"uv run python train.py\", optional inputs = [snapshot names]; [env] lock = \"uv.lock\"), start them with run_submit (they run a clean copy of the checkpoint, so edits after that do not change them), have the code write outputs/metrics.json (flat names → numbers) and other results to $PI_RESEARCH_OUTPUTS, follow them with run_status or run_logs, and compare with run_compare, which says when two runs are not like for like. You may start a limited number of runs and run minutes per hour (runs_list shows the limit and what is used); when a run needs more, say so and let the user start it. The idea's risks (risk_list) say what could make it unusable: test the most fundamental unknown ones first with small runs, and record the result with risk_set (status measured-ok or failed, evidence {run}); when a risk fails, say so plainly and offer the ways forward (revise the idea, work around it, or stop).",
   data:
     "This conversation is the Release stage. It works on the release candidate (candidate_status, production_status: its exact version, workspace checkpoint and the snapshots its research used): validating it, and building the production data it needs: live and scheduled feeds, their contracts and quality checks. Production data is live and continuously updated, not exploratory; be precise about schemas, units, timing, latency and gaps. candidate_status shows the release candidate, its checks and validation runs; candidate_validate runs its entry on exactly its checkpoint.",
   code: "This conversation is the Design & Code stage: design and implement the strategy code.",
@@ -707,6 +709,45 @@ export const tools: WorkbenchTool[] = [
     },
   }),
 
+  /* ── Risks: what could make an idea unusable, and how well it is known ── */
+  define({
+    name: "risk_list",
+    ideaField: "idea",
+    title: "An idea's risks",
+    description:
+      "The idea's risks, worst first (failed, unknown, estimated, waived, measured-ok), each with its kind, evidence (a run, a note or text) and whether that evidence is stale (measured on other data or environment than the latest run, or before the current release candidate).",
+    input: z.object({ idea: rdIdea }).strict(),
+    readOnly: true,
+    run: ({ sid, wb }, { idea }) => wb.riskList(sid, wb.riskIdea(sid, idea)),
+  }),
+  define({
+    name: "risk_add",
+    ideaField: "idea",
+    title: "Add a risk",
+    description:
+      "Add a risk to an idea: one sentence on what could make it unusable in practice (data availability or rights, feature timing, compute, memory, latency, cost). When an idea is framed or pursued, draft its 3–5 most important risks as unknown, most fundamental first, and suggest the cheapest test for each.",
+    input: riskAddSchema,
+    run: ({ sid, wb, origin }, input) => wb.addRisk(sid, input, origin),
+  }),
+  define({
+    name: "risk_set",
+    ideaField: "idea",
+    title: "Update a risk",
+    description:
+      "Change a risk's status, text, kind or evidence. After a run tests a risk, set measured-ok or failed with evidence {run}. waived needs a reason. Only record failed or waived with the user's agreement when it changes the direction of the work.",
+    input: riskSetSchema,
+    run: ({ sid, wb, origin }, input) => wb.setRisk(sid, input, origin),
+  }),
+  define({
+    name: "risk_delete",
+    ideaField: "idea",
+    title: "Delete a risk",
+    description: "Remove a risk from an idea. Only on an explicit request.",
+    input: riskDeleteSchema,
+    destructive: true,
+    run: ({ sid, wb }, { idea, risk }) => wb.deleteRisk(sid, wb.riskIdea(sid, idea), risk),
+  }),
+
   /* ── Release candidate ───────────────────────────────────────────── */
   define({
     name: "candidate_status",
@@ -1188,11 +1229,13 @@ export class Workbench {
       current: this.store.get(sid).production?.current ?? null,
       // What validating the candidate would run (research.toml entries; the checkpoint equals the workspace when nothing is pending).
       entries: entriesOf(this.liveManifest(dir).manifest),
+      risks: this.riskList(sid, target).counts,
+      failedRisks: this.riskList(sid, target).risks.filter((r) => r.status === "failed").map((r) => r.text),
       defaultEntry: defaultEntry(this.liveManifest(dir).manifest) ?? null,
     };
   }
   /** Freeze an idea for production: exact version, clean workspace checkpoint, snapshots used. */
-  async commitProduction(sid: string, input: { idea?: string; snapshots?: string[]; note?: string; entry?: string }) {
+  async commitProduction(sid: string, input: { idea?: string; snapshots?: string[]; note?: string; entry?: string; acceptFailedRisks?: string }) {
     const target = input.idea ?? this.developIdea(sid);
     if (!target) throw new Error("No idea given and none is being developed in the window. Use ideas_pursued for targets.");
     const p = this.pursuedIdeas(sid).find((i) => i.target === target);
@@ -1202,6 +1245,10 @@ export class Workbench {
     if (pending.length)
       throw new Error(`The idea's workspace has ${pending.length} change${pending.length === 1 ? "" : "s"} not yet checkpointed. Record a checkpoint first, so production gets an exact state.`);
     const [cp] = await this.rd.history(dir, 1);
+    const risks = this.riskList(sid, target).risks;
+    const failed = risks.filter((r) => r.status === "failed");
+    if (failed.length && !input.acceptFailedRisks)
+      throw new Error(`${failed.length} of the idea's risks failed (${failed.map((r) => `“${r.text}”`).join("; ")}). Revise the idea or work around them, or, if the user decides to go ahead, give acceptFailedRisks with the reason.`);
     const all = this.data.snapshots(sid);
     const names = input.snapshots ?? all.filter((s) => this.data.references(sid, s.name).some((r) => r.idea === target)).map((s) => s.name);
     const snapshots = names.map((n) => {
@@ -1223,12 +1270,94 @@ export class Workbench {
     const p0 = this.store.get(sid).production;
     const number = (p0?.history.length ?? 0) + (p0?.current ? 1 : 0) + 1;
     const entry = input.entry ?? defaultEntry(readManifest(await this.rd.fileAt(dir, cp.sha, MANIFEST_FILE)).manifest);
-    Object.assign(commit, { number, ...(entry ? { entry } : {}) });
+    Object.assign(commit, {
+      number,
+      ...(entry ? { entry } : {}),
+      ...(risks.length ? { risks: risks.map((r) => ({ id: r.id, text: r.text, status: r.status })) } : {}),
+      ...(failed.length ? { acceptedFailedRisks: input.acceptFailedRisks } : {}),
+    });
     await this.rd.tag(dir, `candidate/${number}`, cp.sha);
     this.store.commitProduction(sid, commit);
     this.view.publish(sid, { type: "refresh" });
     return commit;
   }
+  /* ── risks ─────────────────────────────────────────────────────── */
+  /** The idea risks are about: the given saved idea, else the window's current one. */
+  riskIdea(sid: string, idea?: string) {
+    const t = idea ?? this.developIdea(sid) ?? this.focusIdea(sid);
+    if (!t) throw new Error("No idea given and none is current in the window. Use ideas_pursued for targets.");
+    if (!this.savedIdea(sid, t)) throw new Error(`Idea ${t} is not a saved idea. Save it before adding risks.`);
+    return t;
+  }
+  /** Risks worst first, with their evidence resolved and whether it has gone stale. */
+  riskList(sid: string, target: string) {
+    const risks = this.store.get(sid).risks?.[target.slice(2)] ?? [];
+    const runs = this.runs.list(sid, target);
+    const latest = runs.find((r) => r.status === "succeeded" && r.candidate === null);
+    const c = this.store.get(sid).production?.current;
+    const candidate = c?.idea === target ? c : null;
+    const hashes = (r: Run) => r.snapshots.map((s) => s.sha256).sort().join(",");
+    const staleness = (risk: Risk): string | null => {
+      const r = risk.evidence?.run ? runs.find((x) => x.id === risk.evidence!.run) : undefined;
+      if (!r || (risk.status !== "measured-ok" && risk.status !== "failed")) return null;
+      if (latest && latest.id !== r.id && hashes(latest) !== hashes(r)) return `Measured on other data than the latest run (${latest.id.slice(0, 8)}).`;
+      if (latest && latest.id !== r.id && JSON.stringify(latest.environment.lock) !== JSON.stringify(r.environment.lock)) return `Measured in another environment than the latest run (${latest.id.slice(0, 8)}).`;
+      if (candidate && candidate.checkpoint !== r.commit && r.createdAt < candidate.committedAt) return `Measured on earlier code than release candidate ${candidate.number ?? ""} (${candidate.checkpoint.slice(0, 8)}).`;
+      return null;
+    };
+    const out = risks.map((risk) => {
+      const r = risk.evidence?.run ? runs.find((x) => x.id === risk.evidence!.run) : undefined;
+      return { ...risk, stale: staleness(risk), evidenceRun: r ? { id: r.id, status: r.status, commit: r.commit, label: r.entry ?? r.command } : null };
+    });
+    out.sort((a, b) => riskOrder[a.status] - riskOrder[b.status] || (a.stale ? 0 : 1) - (b.stale ? 0 : 1));
+    const count = (s: string) => risks.filter((r) => r.status === s).length;
+    return { idea: target, risks: out, counts: { failed: count("failed"), unknown: count("unknown"), estimated: count("estimated"), waived: count("waived"), measuredOk: count("measured-ok"), stale: out.filter((r) => r.stale).length } };
+  }
+  private checkEvidence(sid: string, target: string, e?: Risk["evidence"] | null) {
+    if (!e) return;
+    if (e.run && this.runs.read(sid, e.run).idea !== target) throw new Error(`Run ${e.run} belongs to another idea.`);
+    if (e.note && !this.store.get(sid).annotations.some((a) => a.id === e.note)) throw new Error(`Note ${e.note} not found. Use source_notes for ids.`);
+  }
+  addRisk(sid: string, input: { idea?: string; text: string; kind: Risk["kind"]; status?: Risk["status"]; evidence?: Risk["evidence"]; reason?: string }, origin: "user" | "agent") {
+    const target = this.riskIdea(sid, input.idea);
+    this.checkEvidence(sid, target, input.evidence);
+    if (input.status === "waived" && !input.reason) throw new Error("A waived risk needs a reason.");
+    const now = new Date().toISOString();
+    const risk: Risk = { id: randomUUID(), text: input.text, kind: input.kind, status: input.status ?? "unknown", ...(input.evidence ? { evidence: input.evidence } : {}), ...(input.reason ? { reason: input.reason } : {}), by: origin, createdAt: now, updatedAt: now };
+    this.store.changeRisks(sid, target.slice(2), (rs) => {
+      if (rs.length >= 30) throw new Error("An idea holds at most 30 risks; keep the ones that could stop it.");
+      return [...rs, risk];
+    });
+    this.view.publish(sid, { type: "refresh" });
+    return { idea: target, risk };
+  }
+  setRisk(sid: string, input: { idea?: string; risk: string; text?: string; kind?: Risk["kind"]; status?: Risk["status"]; evidence?: Risk["evidence"] | null; reason?: string }, _origin: "user" | "agent") {
+    const target = this.riskIdea(sid, input.idea);
+    this.checkEvidence(sid, target, input.evidence);
+    let updated: Risk | undefined;
+    this.store.changeRisks(sid, target.slice(2), (rs) =>
+      rs.map((r) => {
+        if (r.id !== input.risk) return r;
+        const next: Risk = { ...r, ...(input.text ? { text: input.text } : {}), ...(input.kind ? { kind: input.kind } : {}), ...(input.status ? { status: input.status } : {}), ...(input.reason !== undefined ? { reason: input.reason } : {}), updatedAt: new Date().toISOString() };
+        if (input.evidence === null) delete next.evidence;
+        else if (input.evidence) next.evidence = input.evidence;
+        if (!next.reason) delete next.reason;
+        if (next.status === "waived" && !next.reason) throw new Error("A waived risk needs a reason.");
+        return (updated = next);
+      }),
+    );
+    if (!updated) throw new Error(`Risk ${input.risk} not found on ${target}. Use risk_list for ids.`);
+    this.view.publish(sid, { type: "refresh" });
+    return { idea: target, risk: updated };
+  }
+  deleteRisk(sid: string, target: string, risk: string) {
+    let found = false;
+    this.store.changeRisks(sid, target.slice(2), (rs) => rs.filter((r) => (r.id === risk ? ((found = true), false) : true)));
+    if (!found) throw new Error(`Risk ${risk} not found on ${target}.`);
+    this.view.publish(sid, { type: "refresh" });
+    return { deleted: risk };
+  }
+
   /* ── runs ──────────────────────────────────────────────────────── */
   runLimit(sid: string) {
     return this.store.get(sid).runLimit ?? DEFAULT_RUN_LIMIT;
@@ -1312,6 +1441,7 @@ export class Workbench {
         environmentLock: !!lock || !!manifest?.env?.lock,
         snapshotsKept: c.snapshots.length,
         entry: c.entry ?? defaultEntry(manifest) ?? null,
+        risks: this.riskList(sid, c.idea).counts,
       },
       state: runs.some((r) => !finished(r.status)) ? "validating" : !last ? "not validated" : last.status === "succeeded" ? "passed" : "failed",
       validationRuns: runs.map(runSummary),

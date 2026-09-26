@@ -7,6 +7,7 @@ import { PaneLoading, useAction, useResearch } from "../research";
 import { ideaStatus, type IdeaBoardOp } from "../../idea-board-contract";
 import { ACTIVE_IDEA } from "../WorkbenchEvents";
 import { chooseIdea } from "../../workbench-contract";
+import { RisksPanel } from "./Risks";
 
 /** Idea board: brainstorm drafts and saved ideas grouped by status.
  *
@@ -1094,6 +1095,7 @@ function IdeaEditor({
           )}
         </p>
       )}
+      {card.recordId && <RisksPanel idea={`r:${card.recordId}`} />}
       {versions.length > 0 && (
         <details className="fold">
           <summary>History · {versions.length} version{versions.length > 1 ? "s" : ""}</summary>

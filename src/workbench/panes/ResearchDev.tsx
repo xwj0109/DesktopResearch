@@ -6,6 +6,7 @@ import { useResearch } from "../research";
 import { PaneVisible, usePoll } from "../usePoll";
 import { setBadge } from "../badges";
 import type { IdeaCoverage } from "../../idea-coverage";
+import { riskSummary, useRisks } from "./Risks";
 import { formatTime } from "../transcript";
 import { CodeView } from "./CodePane";
 import { SendToProduction } from "./Production";
@@ -105,6 +106,7 @@ function IdeaStatus({ dev }: { dev: DevIdea }) {
   const scope = useResearch();
   const files = usePoll<{ files: RdFile[] }>(`/native/rd/files?idea=${dev.target}`, 3000);
   const changes = usePoll<{ files: unknown[] }>(`/native/rd/changes?idea=${dev.target}`, 4000);
+  const risks = riskSummary(useRisks(dev.target).data?.counts);
   const newest = newestDocs(files.data?.files)[0];
   const fresh = !!newest && newest.modified > (scope.drafts[seenKey(dev.target)] ?? "");
   const pending = changes.data?.files.length;
@@ -118,6 +120,12 @@ function IdeaStatus({ dev }: { dev: DevIdea }) {
   const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
   return (
     <span className="idea-status" role="group" aria-label="Where this idea stands">
+      {risks && (
+        <button className={`is-item ${risks.level === "err" ? "err" : risks.level === "warn" ? "warn" : ""}`} title="The idea's risks (Ideas)" onClick={() => (scope.setDraft("ideas:active", dev.target), scope.goToStage?.("ideas", "idea"))}>
+          {risks.level === "err" || risks.level === "warn" ? "▲ " : ""}
+          {risks.text}
+        </button>
+      )}
       {c && (
         <button className="is-item" title={c.next ? `Literature · next: ${c.next}` : "Literature"} onClick={() => scope.goToStage?.("literature", "sources")}>
           {plural(papers, "paper")} · {plural(c.notes.total, "note")}

@@ -102,6 +102,14 @@ export function nativeRoutes(
         const { run, path } = z.object({ run: z.uuid(), path: z.string().min(1).max(500) }).strict().parse(req.query);
         res.json(await workbench.call(z.uuid().parse(req.params.id), "run_output", { run, path }));
       });
+      app.get(base + "/risks", async (req, res) => {
+        const { idea } = z.object({ idea: z.string().regex(/^r:[0-9a-f-]{36}$/) }).strict().parse(req.query);
+        res.json(await workbench.call(z.uuid().parse(req.params.id), "risk_list", { idea }));
+      });
+      for (const [route, tool] of [["risks/add", "risk_add"], ["risks/set", "risk_set"], ["risks/delete", "risk_delete"]] as const)
+        app.post(base + "/" + route, async (req, res) => {
+          res.json(await workbench.call(z.uuid().parse(req.params.id), tool, req.body));
+        });
       app.get(base + "/candidate", async (req, res) => {
         res.json(await workbench.call(z.uuid().parse(req.params.id), "candidate_status", {}));
       });

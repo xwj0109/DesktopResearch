@@ -4,6 +4,7 @@ import { sourceImportanceSchema } from "../src/source-importance-contract.ts";
 import { ideaAddNoteSchema, noteLinkInputSchema } from "../src/note-link-contract.ts";
 import { productionCommitInputSchema } from "../src/production-contract.ts";
 import { candidateValidateSchema, runIdSchema, runLimitSchema, runSubmitSchema } from "../src/run-contract.ts";
+import { riskAddSchema, riskDeleteSchema, riskSetSchema } from "../src/risk-contract.ts";
 import { feedCreateSchema, feedDeleteSchema, feedServiceSchema, feedUpdateSchema } from "../src/feed-contract.ts";
 import { recoverySchema } from "../src/recovery-contract.ts";
 import { z } from "zod";
@@ -73,6 +74,10 @@ export function researchRequest(scope: Scope, request: LabRequest): boolean {
     else if (tail === "/native/runs/limit") schema = runLimitSchema;
     else if (tail === "/native/candidate/validate") schema = candidateValidateSchema;
     else if (tail === "/native/candidate") read = true;
+    else if (tail === "/native/risks/add") schema = riskAddSchema;
+    else if (tail === "/native/risks/set") schema = riskSetSchema;
+    else if (tail === "/native/risks/delete") schema = riskDeleteSchema;
+    else if (new RegExp(`^/native/risks\\?idea=r:${uuid}$`).test(tail)) read = true;
     else if (new RegExp(`^/native/runs\\?idea=r:${uuid}$`).test(tail)) read = true;
     else if (new RegExp(`^/native/runs/(status\\?run=${uuid}|log\\?run=${uuid}(&offset=\\d{1,12})?|compare\\?a=${uuid}&b=${uuid}|output\\?run=${uuid}&path=[^&#]{1,1500})$`).test(tail)) read = true;
     else if (tail === "/native/feeds") read = true;

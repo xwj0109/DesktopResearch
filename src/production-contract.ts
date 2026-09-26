@@ -20,6 +20,9 @@ export const productionCommitSchema = z
     number: z.number().int().min(1).optional(),
     /** What validation runs: a research.toml entry or a command. */
     entry: z.string().max(1000).optional(),
+    /** The idea's risks when the candidate was made, and why failed ones were accepted. */
+    risks: z.array(z.object({ id: z.uuid(), text: z.string().max(500), status: z.string().max(20) }).strict()).max(30).optional(),
+    acceptedFailedRisks: z.string().max(2000).optional(),
   })
   .strict();
 export type ProductionCommit = z.infer<typeof productionCommitSchema>;
@@ -33,5 +36,6 @@ export const productionCommitInputSchema = z
     snapshots: z.array(z.string().regex(/^[a-z0-9-]{1,120}$/)).max(200).optional().describe("Data snapshots the work used. Omit to take those the idea's workspace code references."),
     note: z.string().trim().max(2000).optional(),
     entry: z.string().trim().min(1).max(1000).optional().describe("What validating the candidate runs: a research.toml [run.<entry>] name or a command. Default: the entry named validate, else the only entry."),
+    acceptFailedRisks: z.string().trim().min(1).max(2000).optional().describe("Only when the user decides to go ahead although some of the idea's risks failed: their reason."),
   })
   .strict();
