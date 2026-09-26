@@ -26,6 +26,8 @@ export const runSchema = z
     autoCheckpoint: z.boolean(),
     /** Release candidate number this run validates, if any. */
     candidate: z.number().int().min(1).nullable(),
+    /** The batch this run belongs to, if any. */
+    batch: z.uuid().optional(),
     note: z.string().max(2000).optional(),
     origin: z.enum(["user", "agent"]),
     wallSeconds: z.number().int().min(10).max(86400),
@@ -78,3 +80,38 @@ export const candidateValidateSchema = z
   })
   .strict();
 export const runIdSchema = z.object({ run: z.uuid() }).strict();
+
+/** A batch: several runs of one checkpoint, started together within the agent
+ * limit; when the last one ends the app writes a summary into the workspace. */
+export const batchSchema = z
+  .object({
+    version: z.literal(1),
+    id: z.uuid(),
+    idea: z.string().regex(/^r:[0-9a-f-]{36}$/),
+    title: z.string().min(1).max(200),
+    /** Empty only for the moment between recording the batch and starting its runs. */
+    runs: z.array(z.uuid()).max(20),
+    rankBy: z.string().max(80).nullable(),
+    higherIsBetter: z.boolean(),
+    origin: z.enum(["user", "agent"]),
+    createdAt: z.string(),
+    /** The workspace path of the summary, once written. */
+    summary: z.string().max(300).optional(),
+  })
+  .strict();
+export type Batch = z.infer<typeof batchSchema>;
+export const runBatchSchema = z
+  .object({
+    idea: z.string().regex(/^r:[0-9a-f-]{36}$/).optional().describe("Saved idea (r:<id>). Omit for the idea Research Development is working on."),
+    title: z.string().trim().min(1).max(200).describe("What the batch tests, e.g. \"Lookback 7d vs 14d vs 30d\"."),
+    runs: z
+      .array(z.object({ entry: z.string().max(40).optional(), command: z.string().trim().min(1).max(1000).optional(), note: z.string().trim().max(2000).optional() }).strict())
+      .min(1)
+      .max(20)
+      .describe("One item per run: a research.toml entry or a command (vary arguments or environment variables per run)."),
+    wallMinutes: z.number().int().min(1).max(1440).optional().describe("Time limit of each run (default 60)."),
+    rankBy: z.string().max(80).optional().describe("Metric (from outputs/metrics.json) to rank the runs by in the summary."),
+    higherIsBetter: z.boolean().optional().describe("Default true."),
+  })
+  .strict();
+export type RunBatch = z.infer<typeof runBatchSchema>;

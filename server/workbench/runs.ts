@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
-import { finished, runSchema, type Run } from "../../src/run-contract.ts";
+import { batchSchema, finished, runSchema, type Batch, type Run } from "../../src/run-contract.ts";
 import { readManifest, MANIFEST_FILE } from "../../src/research-manifest.ts";
 import { materialise } from "./rd.ts";
 
@@ -51,6 +51,7 @@ export interface RunStart {
   origin: "user" | "agent";
   wallSeconds: number;
   note?: string;
+  batch?: string;
 }
 type Snapshot = { name: string; file: string; sha256: string };
 
@@ -127,6 +128,7 @@ export class RunService {
       checkpointMessage: s.checkpointMessage,
       autoCheckpoint: s.autoCheckpoint,
       candidate: s.candidate,
+      ...(s.batch ? { batch: s.batch } : {}),
       ...(s.note ? { note: s.note } : {}),
       origin: s.origin,
       wallSeconds: s.wallSeconds,
@@ -164,6 +166,42 @@ export class RunService {
       fs.closeSync(fd);
     }
     return { text: buf.toString("utf8"), offset: from, next: from + len, size };
+  }
+  /* ── batches ── */
+  private batchFile(sid: string, id: string) {
+    if (!/^[0-9a-f-]{36}$/.test(id)) throw new Error("Invalid batch id");
+    return path.join(this.dir(sid), "batches", `${id}.json`);
+  }
+  saveBatch(sid: string, b: Batch) {
+    const f = this.batchFile(sid, b.id);
+    fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(`${f}.tmp`, JSON.stringify(batchSchema.parse(b), null, 2), { mode: 0o600 });
+    fs.renameSync(`${f}.tmp`, f);
+    return b;
+  }
+  batch(sid: string, id: string): Batch {
+    const f = this.batchFile(sid, id);
+    if (!fs.existsSync(f)) throw new Error(`Batch ${id} not found.`);
+    return batchSchema.parse(JSON.parse(fs.readFileSync(f, "utf8")));
+  }
+  batches(sid: string, idea?: string): Batch[] {
+    const d = path.join(this.dir(sid), "batches");
+    let files: string[] = [];
+    try {
+      files = fs.readdirSync(d).filter((f) => /^[0-9a-f-]{36}\.json$/.test(f));
+    } catch {
+      return [];
+    }
+    return files
+      .flatMap((f) => {
+        try {
+          return [this.batch(sid, f.slice(0, -5))];
+        } catch {
+          return [];
+        }
+      })
+      .filter((b) => !idea || b.idea === idea)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
   /** The run's outputs folder (for reading one output file). */
   outputsDir(sid: string, id: string) {

@@ -37,7 +37,7 @@ import { FeedCatalog } from "../feeds/catalog.ts";
 import { FeedService } from "../feeds/service.ts";
 import { DataFeeds, INTERVALS, type FetchSource } from "./data.ts";
 import { RunService } from "./runs.ts";
-import { DEFAULT_RUN_LIMIT, candidateValidateSchema, finished, runLimitSchema, runSubmitSchema, type Run, type RunSubmit } from "../../src/run-contract.ts";
+import { DEFAULT_RUN_LIMIT, candidateValidateSchema, finished, runBatchSchema, runLimitSchema, runSubmitSchema, type Run, type RunBatch, type RunSubmit } from "../../src/run-contract.ts";
 import { MANIFEST_FILE, readManifest, type ResearchManifest } from "../../src/research-manifest.ts";
 import { riskAddSchema, riskDeleteSchema, riskOrder, riskSetSchema, type Risk } from "../../src/risk-contract.ts";
 import { MARKETS } from "./binance-archive.ts";
@@ -97,7 +97,7 @@ export const STAGE_GUIDANCE: Record<(typeof stageIds)[number], string> = {
   literature:
     "This conversation is the Explore stage (literature). It works on the ideas the user decided to pursue: start from ideas_pursued (each idea at its latest saved version, with the decision reason and the sources it already cites). The window works on one focus idea at a time (ideas_pursued.focus; change it with literature_focus when asked): unless the user says otherwise, \"find papers\", ranking (source_importance with idea) and comments are about the focus idea, or about every pursued idea when there is no focus. For those ideas, find and import relevant papers when asked, read them, highlight and comment on the passages that support, contradict or refine each idea, and say which idea each finding bears on. Treat ideas not marked pursue as out of scope unless the user brings them in. When a passage bears on an idea, create the note with its stance (note_create with stance, or note_link): supports, contradicts or refines; idea_notes shows the evidence gathered for an idea so far. When a finding should change an idea, offer idea_add_note: it adds the note to the idea as an unsaved revision for the user to edit and save. Each pursued idea's coverage lists its gaps: use them to suggest what to read or look for next, especially evidence that could contradict an idea, and re-judge notes made on an earlier version.",
   research:
-    "This conversation is the Develop stage (Research Development) for one pursued idea, and your working directory is that idea's own workspace (a git repository the app checkpoints). Start from idea_context: where the idea stands (risks, literature, workspace, runs, candidate) and the suggested next steps; the user sees the same summary. Develop the research with the user: write and run exploratory scripts and code with your own tools, produce documents there (markdown reports, figures, CSV tables, PDFs), and shape the research specification. Keep work for this idea in this folder. The user sees the files, the changes since the last checkpoint and the documents in the right-hand panes; record a checkpoint (rd_checkpoint, with a short message) when the user asks or offers one at meaningful points. Use idea_get or ideas_pursued for the idea itself and idea_notes for its literature evidence. Real data: the strategy's frozen snapshots are in data/ (read-only Parquet; data_snapshots lists them with their columns). Process them with polars, lazily for tick data (pl.scan_parquet on a snapshot folder, filter and aggregate before collect), rather than loading everything into memory. When the user asks for data, fetch it with data_fetch: tick-level trades, aggregated trades, 1s bars, order-book depth, best bid/ask, open interest, funding and option summaries from the Binance archive (spot, USDⓈ-M, COIN-M, options; data_estimate first for big ranges), or bars from Binance, Coinbase and FRED series; watch data_jobs; for other sources, such as Bloomberg or files the user has, write the file with the user's own code in the workspace and register it with data_register (with a note on its source). Never modify files in data/; derive new files in the workspace instead. Results you will compare or report should come from recorded runs: declare entries in research.toml ([run.<name>] command = \"uv run python train.py\", optional inputs = [snapshot names]; [env] lock = \"uv.lock\"), start them with run_submit (they run a clean copy of the checkpoint, so edits after that do not change them), have the code write outputs/metrics.json (flat names → numbers) and other results to $PI_RESEARCH_OUTPUTS, follow them with run_status or run_logs, and compare with run_compare, which says when two runs are not like for like. You may start a limited number of runs and run minutes per hour (runs_list shows the limit and what is used); when a run needs more, say so and let the user start it. The idea's risks (risk_list) say what could make it unusable: test the most fundamental unknown ones first with small runs, and record the result with risk_set (status measured-ok or failed, evidence {run}); when a risk fails, say so plainly and offer the ways forward (revise the idea, work around it, or stop).",
+    "This conversation is the Develop stage (Research Development) for one pursued idea, and your working directory is that idea's own workspace (a git repository the app checkpoints). Start from idea_context: where the idea stands (risks, literature, workspace, runs, candidate) and the suggested next steps; the user sees the same summary. Develop the research with the user: write and run exploratory scripts and code with your own tools, produce documents there (markdown reports, figures, CSV tables, PDFs), and shape the research specification. Keep work for this idea in this folder. The user sees the files, the changes since the last checkpoint and the documents in the right-hand panes; record a checkpoint (rd_checkpoint, with a short message) when the user asks or offers one at meaningful points. Use idea_get or ideas_pursued for the idea itself and idea_notes for its literature evidence. Real data: the strategy's frozen snapshots are in data/ (read-only Parquet; data_snapshots lists them with their columns). Process them with polars, lazily for tick data (pl.scan_parquet on a snapshot folder, filter and aggregate before collect), rather than loading everything into memory. When the user asks for data, fetch it with data_fetch: tick-level trades, aggregated trades, 1s bars, order-book depth, best bid/ask, open interest, funding and option summaries from the Binance archive (spot, USDⓈ-M, COIN-M, options; data_estimate first for big ranges), or bars from Binance, Coinbase and FRED series; watch data_jobs; for other sources, such as Bloomberg or files the user has, write the file with the user's own code in the workspace and register it with data_register (with a note on its source). Never modify files in data/; derive new files in the workspace instead. Results you will compare or report should come from recorded runs: declare entries in research.toml ([run.<name>] command = \"uv run python train.py\", optional inputs = [snapshot names]; [env] lock = \"uv.lock\"), start them with run_submit (they run a clean copy of the checkpoint, so edits after that do not change them), have the code write outputs/metrics.json (flat names → numbers) and other results to $PI_RESEARCH_OUTPUTS, follow them with run_status or run_logs, and compare with run_compare, which says when two runs are not like for like. You may start a limited number of runs and run minutes per hour (runs_list shows the limit and what is used); when a run needs more, say so and let the user start it. For a bounded search (a few settings or variants), use run_batch with rankBy: the app writes a summary to reports/ when the last run ends; read it and propose what to keep. The idea's risks (risk_list) say what could make it unusable: test the most fundamental unknown ones first with small runs, and record the result with risk_set (status measured-ok or failed, evidence {run}); when a risk fails, say so plainly and offer the ways forward (revise the idea, work around it, or stop).",
   data:
     "This conversation is the Release stage. It works on the release candidate (candidate_status, production_status: its exact version, workspace checkpoint and the snapshots its research used): validating it, and building the production data it needs: live and scheduled feeds, their contracts and quality checks. Production data is live and continuously updated, not exploratory; be precise about schemas, units, timing, latency and gaps. candidate_status shows the release candidate, its checks and validation runs; candidate_validate runs its entry on exactly its checkpoint.",
   code: "This conversation is the Design & Code stage: design and implement the strategy code.",
@@ -665,6 +665,15 @@ export const tools: WorkbenchTool[] = [
     run: ({ sid, wb, origin }, input) => wb.submitRun(sid, input, origin),
   }),
   define({
+    name: "run_batch",
+    ideaField: "idea",
+    title: "Run a batch",
+    description:
+      "Start several runs of one checkpoint together (up to 20): variants of an entry or command, e.g. different lookbacks via arguments or environment variables. The whole batch must fit the agent run limit. When the last run ends, the app writes a summary report to reports/ in the workspace (a table of runs, their resources and metrics, ranked by rankBy), which the user sees in Documents. Use it for a bounded search, then read the summary and propose what to keep.",
+    input: runBatchSchema,
+    run: ({ sid, wb, origin }, input) => wb.submitBatch(sid, input, origin),
+  }),
+  define({
     name: "run_status",
     title: "A run's status and results",
     description: "One run: status and why it ended, the exact checkpoint, command, environment lock, hardware and data it used, wall time and peak memory, metrics, output files, and the end of its log.",
@@ -1046,7 +1055,12 @@ export class Workbench {
       (sid) => store.storage.strategyRoot(sid),
       () => store.ids(),
       (sid) => this.data.snapshots(sid).map((s) => ({ name: s.name, file: s.file, sha256: s.sha256 })),
-      { onChange: (sid) => this.view.publish(sid, { type: "refresh" }) },
+      {
+        onChange: (sid, run) => {
+          this.view.publish(sid, { type: "refresh" });
+          if (run.batch && finished(run.status)) this.summariseBatch(sid, run.batch);
+        },
+      },
     );
   }
 
@@ -1445,12 +1459,16 @@ export class Workbench {
     const recent = this.runs.list(sid).filter((r) => r.origin === "agent" && Date.parse(r.createdAt) >= since);
     return { runs: recent.length, minutes: Math.round(recent.reduce((s, r) => s + r.wallSeconds / 60, 0)) };
   }
-  private checkAgentLimit(sid: string, wallSeconds: number) {
+  private checkAgentLimit(sid: string, wallSeconds: number, count = 1) {
     const limit = this.runLimit(sid),
       used = this.agentUsage(sid);
+    if (count > 1 && (used.runs + count > limit.runs || used.minutes + (count * wallSeconds) / 60 > limit.minutes))
+      throw new Error(
+        `A batch of ${count} runs of up to ${Math.round(wallSeconds / 60)} min would exceed the agent limit (${limit.runs} runs and ${limit.minutes} run minutes per hour; ${used.runs} runs and ${used.minutes} min used). Use fewer runs or a shorter wallMinutes, or ask the user.`,
+      );
     if (used.runs + 1 > limit.runs)
       throw new Error(`The agent run limit is reached: ${limit.runs} run${limit.runs === 1 ? "" : "s"} per hour (${used.runs} used). Ask the user to start this run, or to raise the limit in the Runs pane.`);
-    if (used.minutes + wallSeconds / 60 > limit.minutes)
+    if (used.minutes + (count * wallSeconds) / 60 > limit.minutes)
       throw new Error(`This run would exceed the agent limit of ${limit.minutes} run minutes per hour (${used.minutes} used). Give a shorter wallMinutes (at most ${Math.max(0, limit.minutes - used.minutes)}), or ask the user.`);
   }
   /** The live workspace's research.toml (what the next checkpoint will hold). */
@@ -1468,6 +1486,7 @@ export class Workbench {
       // [[feature]] from research.toml: what the model uses, and when each is known.
       features: (manifest?.feature ?? []).map((f) => ({ ...f, name: f.name })),
       runs: this.runs.list(sid, target).slice(0, limit).map(runSummary),
+      batches: this.runs.batches(sid, target).slice(0, 20).map((b) => ({ id: b.id, title: b.title, runs: b.runs.length, summary: b.summary ?? null, createdAt: b.createdAt })),
       limit: this.runLimit(sid),
       agentUsage: this.agentUsage(sid),
     };
@@ -1503,6 +1522,95 @@ export class Workbench {
     });
     this.view.publish(sid, { type: "refresh" });
     return runSummary(run);
+  }
+  /** Several runs of one checkpoint, started together; a summary is written when the last ends. */
+  async submitBatch(sid: string, input: RunBatch, origin: "user" | "agent") {
+    const { target, dir } = await this.rdWorkspace(sid, input.idea);
+    const v = this.savedIdea(sid, target)!;
+    const wallSeconds = (input.wallMinutes ?? 60) * 60;
+    const { manifest, error } = this.liveManifest(dir);
+    const resolved = input.runs.map((r) => ({ ...resolveEntry(manifest, error, r.entry, r.command), note: r.note }));
+    if (origin === "agent") this.checkAgentLimit(sid, wallSeconds, resolved.length);
+    let autoCheckpoint = false;
+    if ((await this.rd.changes(dir)).files.length) {
+      await this.rd.checkpoint(dir, `Before batch: ${input.title.slice(0, 80)}`);
+      autoCheckpoint = true;
+    }
+    const [cp] = await this.rd.history(dir, 1);
+    const id = randomUUID();
+    // The batch record first, so a run ending at once finds it.
+    const batch = this.runs.saveBatch(sid, { version: 1, id, idea: target, title: input.title, runs: [], rankBy: input.rankBy ?? null, higherIsBetter: input.higherIsBetter ?? true, origin, createdAt: new Date().toISOString() });
+    const runs = resolved.map((r) =>
+      this.runs.start(sid, {
+        idea: target,
+        title: this.savedContent(sid, v).title,
+        workspace: dir,
+        commit: cp.sha,
+        checkpointMessage: cp.message,
+        autoCheckpoint,
+        entry: r.entry,
+        command: r.command,
+        inputs: r.inputs,
+        candidate: null,
+        origin,
+        wallSeconds,
+        batch: id,
+        ...(r.note ? { note: r.note } : {}),
+      }),
+    );
+    this.runs.saveBatch(sid, { ...batch, runs: runs.map((r) => r.id) });
+    this.summariseBatch(sid, id);
+    this.view.publish(sid, { type: "refresh" });
+    return { batch: id, title: batch.title, commit: cp.sha, runs: runs.map(runSummary) };
+  }
+  /** Once every run of a batch has ended: a short report in the workspace (reports/), shown in Documents. */
+  summariseBatch(sid: string, id: string) {
+    try {
+      const b = this.runs.batch(sid, id);
+      if (b.summary || !b.runs.length) return;
+      const runs = b.runs.map((r) => this.runs.read(sid, r));
+      if (!runs.every((r) => finished(r.status))) return;
+      const metricNames = [...new Set(runs.flatMap((r) => Object.keys(r.metrics ?? {})))].slice(0, 6);
+      const rank = b.rankBy;
+      const score = (r: Run) => (rank && typeof r.metrics?.[rank] === "number" ? (r.metrics[rank] as number) : null);
+      const ordered = [...runs].sort((x, y) => {
+        const a = score(x),
+          c = score(y);
+        if (a === null || c === null) return a === null ? (c === null ? 0 : 1) : -1;
+        return b.higherIsBetter ? c - a : a - c;
+      });
+      const cell = (v: unknown) => (typeof v === "number" ? String(Number(v.toPrecision(4))) : v === undefined ? "" : String(v));
+      const mem = (n?: number) => (n ? `${(n / 1024 ** 2).toFixed(0)} MiB` : "");
+      const esc = (t: string) => t.replace(/\|/g, "\\|");
+      const best = rank ? ordered.find((r) => score(r) !== null) : undefined;
+      const hashes = new Set(runs.map((r) => r.snapshots.map((s) => s.sha256).sort().join(",")));
+      const failed = runs.filter((r) => r.status !== "succeeded");
+      const name = (r: Run) => `${esc(r.entry ?? r.command)}${r.note ? ` (${esc(r.note)})` : ""}`;
+      const lines = [
+        `# Batch: ${b.title}`,
+        "",
+        `${runs.length} runs of checkpoint \`${runs[0].commit.slice(0, 8)}\` (“${runs[0].checkpointMessage}”), started ${b.createdAt.slice(0, 16).replace("T", " ")} UTC by the ${b.origin}.${rank ? ` Ranked by **${rank}** (${b.higherIsBetter ? "higher" : "lower"} is better).` : ""}`,
+        "",
+        `| # | run | status | wall time | peak memory |${metricNames.map((m) => ` ${m} |`).join("")}`,
+        `|---|---|---|---|---|${metricNames.map(() => "---|").join("")}`,
+        ...ordered.map((r, i) => `| ${i + 1} | ${name(r)} | ${r.status} | ${r.usage ? `${r.usage.wallSeconds} s` : ""} | ${mem(r.usage?.peakMemoryBytes)} |${metricNames.map((m) => ` ${cell(r.metrics?.[m])} |`).join("")}`),
+        "",
+        ...(best ? [`**Best:** ${name(best)}, ${rank} = ${cell(score(best))}.`, ""] : []),
+        ...(failed.length ? [`**Did not succeed:** ${failed.map((r) => `${name(r)} (${r.status}${r.reason ? `: ${r.reason}` : ""})`).join("; ")}.`, ""] : []),
+        ...(hashes.size > 1 ? ["**Note:** the runs used different data, so differences may come from the data rather than the settings.", ""] : []),
+        `Runs: ${runs.map((r) => `\`${r.id}\``).join(", ")}. Compare any two in Develop → Runs, or with run_compare.`,
+        "",
+      ];
+      const slug = b.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "batch";
+      const rel = `reports/batch-${b.createdAt.slice(0, 10)}-${slug}-${b.id.slice(0, 6)}.md`;
+      const dir = this.rd.dir(sid, b.idea.slice(2));
+      fs.mkdirSync(path.join(dir, "reports"), { recursive: true });
+      fs.writeFileSync(path.join(dir, rel), lines.join("\n"));
+      this.runs.saveBatch(sid, { ...b, summary: rel });
+      this.view.publish(sid, { type: "refresh" });
+    } catch {
+      /* a batch whose workspace or runs are gone has nothing to summarise */
+    }
   }
   async candidateStatus(sid: string) {
     const p = this.store.get(sid).production;
@@ -1883,6 +1991,7 @@ function runSummary(r: Run) {
     checkpointMessage: r.checkpointMessage,
     autoCheckpoint: r.autoCheckpoint,
     candidate: r.candidate,
+    batch: r.batch ?? null,
     origin: r.origin,
     createdAt: r.createdAt,
     startedAt: r.startedAt ?? null,

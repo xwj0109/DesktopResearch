@@ -20,6 +20,7 @@ interface Summary {
   checkpointMessage: string;
   autoCheckpoint: boolean;
   candidate: number | null;
+  batch?: string | null;
   origin: "user" | "agent";
   createdAt: string;
   startedAt: string | null;
@@ -32,6 +33,7 @@ interface Overview {
   idea: string;
   entries: { name: string; command: string; description: string | null }[];
   manifestError: string | null;
+  batches?: { id: string; title: string; runs: number; summary: string | null; createdAt: string }[];
   features?: ({ name: string; source?: string; lookback?: string; available_after?: string } & Record<string, unknown>)[];
   runs: Summary[];
   limit: { runs: number; minutes: number };
@@ -149,6 +151,11 @@ export function RunsPane() {
               {label(r)}
               {r.candidate ? <span className="tag ok">candidate {r.candidate}</span> : null}
               {r.origin === "agent" ? <span className="tag">agent</span> : null}
+              {r.batch ? (
+                <span className="tag" title={`Batch: ${o?.batches?.find((b) => b.id === r.batch)?.title ?? ""}`}>
+                  batch
+                </span>
+              ) : null}
             </span>
             <span className="m">
               {r.commit.slice(0, 7)} · {formatTime(r.createdAt)?.short ?? ""}

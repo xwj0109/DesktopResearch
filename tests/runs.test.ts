@@ -237,3 +237,40 @@ test("a release candidate is validated on exactly its checkpoint, with its entry
   assert.deepEqual([st.state, st.validationRuns.length], ["passed", 1]);
   assert.equal(execFileSync("git", ["rev-parse", "candidate/1^{commit}"], { cwd: dir, encoding: "utf8" }).trim(), c.checkpoint);
 });
+
+test("a batch runs variants of one checkpoint within the agent limit and writes a summary report", async (t) => {
+  const { call, agent, wb, sid, store, ended } = setup(t);
+  const a = await pursued(call, "Batch idea");
+  await call("rd_files", { idea: a });
+  const dir = path.join(store.storage.strategyRoot(sid), "Research-Workspaces", a.slice(2));
+  fs.writeFileSync(path.join(dir, "fit.sh"), 'printf \'{"sharpe": %s, "lookback": %s}\' "$1" "$2" > "$PI_RESEARCH_OUTPUTS/metrics.json"\n');
+  const runs = [
+    { command: "sh fit.sh 0.8 7", note: "7d" },
+    { command: "sh fit.sh 1.4 14", note: "14d" },
+    { command: "sh fit.sh 1.1 30", note: "30d" },
+    { command: "exit 2", note: "broken" },
+  ];
+  // Too many for the agent's limit: refused before anything starts.
+  await call("run_limit_set", { runs: 3, minutes: 60 });
+  const refused = await agent("run_batch", { idea: a, title: "Lookback", runs, wallMinutes: 10 });
+  assert.match(refused.text, /A batch of 4 runs of up to 10 min would exceed the agent limit/);
+  assert.equal((await call("runs_list", { idea: a })).runs.length, 0);
+  await call("run_limit_set", { runs: 5, minutes: 60 });
+  const b = await agent("run_batch", { idea: a, title: "Lookback 7d vs 14d vs 30d", runs, wallMinutes: 10, rankBy: "sharpe" });
+  assert.equal(b.error, false, b.text);
+  assert.equal(new Set(b.value.runs.map((r: any) => r.commit)).size, 1, "one checkpoint for the whole batch");
+  assert.equal((await call("rd_history", { idea: a })).checkpoints[0].message, "Before batch: Lookback 7d vs 14d vs 30d");
+  for (const r of b.value.runs) await ended(r.id);
+  let batches = (await call("runs_list", { idea: a })).batches;
+  for (let i = 0; i < 50 && !batches[0].summary; i++) (wb.runs.tick(), await sleep(50), (batches = (await call("runs_list", { idea: a })).batches));
+  assert.match(batches[0].summary, /^reports\/batch-\d{4}-\d\d-\d\d-lookback-7d-vs-14d-vs-30d-[0-9a-f]{6}\.md$/);
+  const report = fs.readFileSync(path.join(dir, batches[0].summary), "utf8");
+  assert.match(report, /^# Batch: Lookback 7d vs 14d vs 30d/);
+  assert.match(report, /Ranked by \*\*sharpe\*\* \(higher is better\)/);
+  const rows = report.split("\n").filter((l) => /^\| \d/.test(l));
+  assert.deepEqual(rows.map((l) => l.split("|")[2].trim()), ["sh fit.sh 1.4 14 (14d)", "sh fit.sh 1.1 30 (30d)", "sh fit.sh 0.8 7 (7d)", "exit 2 (broken)"]);
+  assert.match(report, /\*\*Best:\*\* sh fit\.sh 1\.4 14 \(14d\), sharpe = 1\.4\./);
+  assert.match(report, /\*\*Did not succeed:\*\* exit 2 \(broken\) \(failed: Exited with code 2; see the log\)/);
+  // The report is a document of the workspace (not yet checkpointed).
+  assert.ok((await call("rd_changes", { idea: a })).files.some((f: any) => f.path === batches[0].summary));
+});
